@@ -1,0 +1,28 @@
+[package]
+name = "min_shark"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dov Reshef <reshef.dov@gmail.com>"]
+license = "MIT OR Apache-2.0"
+description = "A crate to parse and match a subset of the wireshark filter display language"
+readme = "README.md"
+keywords = ["tshark", "wireshark", "filter"]
+categories = ["matching", "parsing"]
+documentation = "https://docs.rs/min_shark"
+repository = "https://github.com/dovreshef/min_shark"
+exclude = [
+    ".github/**/*",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chumsky = { version = "1.0.0-alpha.4", features = ["label"] }
+regex = "1.9"
+derive_more = "0.99"
+ipnet = "2.8"
+memchr = "2.6"
+
+[dev-dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
