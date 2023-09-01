@@ -256,7 +256,7 @@ mod tests {
             ('"', r#""two \\ backslashes""#, r"two \\ backslashes"),
             ('"', r#""one \" quote""#, "one \" quote"),
             ('\'', r#"'one \" quote'"#, r#"one \" quote"#),
-            ('\'', r#"'one \' quote'"#, "one \' quote"),
+            ('\'', r"'one \' quote'", "one \' quote"),
         ];
         for (delimiter, expr, expected) in cases {
             info!("Parsing escaped string with delimiter {delimiter}: {expr} --> {expected}");
