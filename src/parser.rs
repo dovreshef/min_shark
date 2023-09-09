@@ -1,4 +1,8 @@
 use crate::{
+    driver::{
+        ErrorKind,
+        Expected,
+    },
     expression::{
         Clause,
         CmpOp,
@@ -6,418 +10,437 @@ use crate::{
         IpOp,
         PayloadLenOp,
         PayloadOp,
-        RegexMatcher,
         ValOp,
     },
+    input::Input,
     lexer::{
-        Spanned,
         Token,
+        TokenKind,
     },
-    mac_addr::MacAddr,
+    value_parsers::{
+        parse_byte_string,
+        parse_escaped_byte_string,
+        parse_ip_net,
+        parse_mac_addr,
+        parse_regex,
+        parse_u16,
+    },
     Expression,
 };
-use chumsky::prelude::*;
-use ipnet::IpNet;
-use regex::bytes::Regex;
-use std::net::IpAddr;
+use bstr::BStr;
+use std::vec::IntoIter;
 
-/// Parse a given string as a u16
-fn parse_u16(val: &str) -> Result<u16, &'static str> {
-    val.parse().map_err(|_| "value is not a valid number")
+#[derive(Debug)]
+pub(crate) struct Parser<'a> {
+    input: Input<'a>,
+    tokens: IntoIter<Token>,
+    current: Token,
 }
 
-/// Parse a given string as a mac-address
-fn parse_mac_addr(val: &str) -> Result<MacAddr, &'static str> {
-    MacAddr::try_from(val).map_err(|_| "value is not a valid mac-address")
-}
-
-/// Parse a given string as a regex
-fn parse_regex(val: &str) -> Result<RegexMatcher, String> {
-    Regex::new(val)
-        .map(RegexMatcher::new)
-        .map_err(|e| format!("{e}"))
-}
-
-/// Parse a given string as a byte-string (i.e. groups of two hex values, separated by ':' or not)
-fn parse_byte_string(val: &str) -> Result<Vec<u8>, &'static str> {
-    let byte = any::<_, extra::Err<Simple<char>>>()
-        .filter(char::is_ascii_hexdigit)
-        .repeated()
-        .exactly(2)
-        .map_slice(|s| u8::from_str_radix(s, 16).unwrap());
-
-    let hex = byte
-        .separated_by(just(':'))
-        .at_least(2)
-        .collect::<Vec<_>>()
-        .or(byte.repeated().at_least(1).collect());
-
-    hex.parse(val)
-        .into_result()
-        .map_err(|_| "value is not a colon separated byte string")
-}
-
-/// Parse a string as bytes, including un-escaping escaped characters.
-/// (code taken from https://github.com/BurntSushi/ripgrep/blob/master/crates/cli/src/escape.rs)
-/// The string passed here is expected to have been a quoted string. That is validated up the stack.
-fn parse_escaped_byte_string(val: &str) -> Result<Vec<u8>, &'static str> {
-    /// A single state in the state machine used by `unescape`.
-    #[derive(PartialEq, Eq)]
-    enum State {
-        /// The state after seeing a `\`.
-        Escape,
-        /// The state after seeing a `\x`.
-        HexFirst,
-        /// The state after seeing a `\x[0-9A-Fa-f]`.
-        HexSecond(char),
-        /// Default state.
-        Literal,
-    }
-
-    let mut bytes = vec![];
-    let mut state = State::Literal;
-    for c in val.chars() {
-        match state {
-            State::Escape => match c {
-                '\\' => {
-                    bytes.push(b'\\');
-                    state = State::Literal;
-                }
-                'n' => {
-                    bytes.push(b'\n');
-                    state = State::Literal;
-                }
-                'r' => {
-                    bytes.push(b'\r');
-                    state = State::Literal;
-                }
-                't' => {
-                    bytes.push(b'\t');
-                    state = State::Literal;
-                }
-                'x' => {
-                    state = State::HexFirst;
-                }
-                c => {
-                    bytes.extend(format!(r"\{}", c).into_bytes());
-                    state = State::Literal;
-                }
-            },
-            State::HexFirst => match c {
-                '0'..='9' | 'A'..='F' | 'a'..='f' => {
-                    state = State::HexSecond(c);
-                }
-                c => {
-                    bytes.extend(format!(r"\x{}", c).into_bytes());
-                    state = State::Literal;
-                }
-            },
-            State::HexSecond(first) => match c {
-                '0'..='9' | 'A'..='F' | 'a'..='f' => {
-                    let ordinal = format!("{}{}", first, c);
-                    let byte = u8::from_str_radix(&ordinal, 16).unwrap();
-                    bytes.push(byte);
-                    state = State::Literal;
-                }
-                c => {
-                    let original = format!(r"\x{}{}", first, c);
-                    bytes.extend(original.into_bytes());
-                    state = State::Literal;
-                }
-            },
-            State::Literal => match c {
-                '\\' => {
-                    state = State::Escape;
-                }
-                c => {
-                    bytes.extend(c.to_string().as_bytes());
-                }
-            },
+impl<'a> Parser<'a> {
+    pub(crate) fn new(input: Input<'a>, tokens: Vec<Token>) -> Self {
+        let mut tokens = tokens.into_iter();
+        // There must be at least an Eof token
+        let current = tokens.next().unwrap();
+        Self {
+            input,
+            tokens,
+            current,
         }
     }
-    match state {
-        State::Escape => bytes.push(b'\\'),
-        State::HexFirst => bytes.extend(b"\\x"),
-        State::HexSecond(c) => bytes.extend(format!("\\x{}", c).into_bytes()),
-        State::Literal => {}
+
+    /// Retrieve the source matching the current token
+    fn current_data(&self) -> &BStr {
+        &self.input[self.current.start..self.current.end]
     }
-    Ok(bytes)
-}
 
-/// Parse a given string as an ip or a CIDR ip/net
-fn parse_ip_net(val: &str) -> Result<IpNet, String> {
-    // Try to parse first as a single ip address, if it does not work, try as a cidr
-    val.parse::<IpAddr>()
-        .map(IpNet::from)
-        .or_else(|_| val.parse::<IpNet>())
-        .map_err(|e| format!("{e}"))
-}
-
-/// Used in the `value_to_t` parser to choose whether to support quoted string, plain string,
-/// or both
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ValueMode {
-    Quoted,
-    Unquoted,
-    Both,
-}
-
-/// Parse a value as a t
-fn value_to_t<'src, 'a, F, T, E>(
-    conversion_fn: &'a F,
-    mode: ValueMode,
-) -> impl Parser<'src, &'src [Token], T, extra::Err<Rich<'src, Token>>> + Clone
-where
-    F: Fn(&str) -> Result<T, E> + 'a,
-    E: std::fmt::Display,
-    'a: 'src,
-{
-    select! {
-        Token::QuotedValue(t) if mode == ValueMode::Quoted || mode == ValueMode::Both => t,
-        Token::Value(t) if mode == ValueMode::Unquoted || mode == ValueMode::Both => t,
+    /// Advance to the next token and return it.
+    /// If we have reached the end we'll stay with the Eof token.
+    fn advance(&mut self) {
+        if let Some(token) = self.tokens.next() {
+            self.current = token;
+        }
     }
-    .try_map(|val, span| {
-        conversion_fn(val.as_str()).map_err(|e| Rich::custom(span, format!("{e}")))
-    })
-}
 
-/// Parse a list of values, i.e. `{ one, two, three }`, to a vector
-fn values_to_t<'src, 'a, F, T, E>(
-    conversion_fn: &'a F,
-    mode: ValueMode,
-) -> impl Parser<'src, &'src [Token], Vec<T>, extra::Err<Rich<'src, Token>>> + Clone
-where
-    F: Fn(&str) -> Result<T, E> + 'a,
-    E: std::fmt::Display,
-    'a: 'src,
-{
-    select! {
-        Token::QuotedValue(t) if mode == ValueMode::Quoted || mode == ValueMode::Both => t,
-        Token::Value(t) if mode == ValueMode::Unquoted || mode == ValueMode::Both => t,
+    /// Advance to the next token, only if the current token kind is `kind`.
+    /// Otherwise return an error.
+    fn advance_if(&mut self, kind: TokenKind) -> Result<(), ErrorKind> {
+        if self.current.kind != kind {
+            return Err(ErrorKind::unexpected(
+                Expected::token_kind(kind),
+                self.current,
+            ));
+        }
+        self.advance();
+        Ok(())
     }
-    .separated_by(just(Token::Comma))
-    .at_least(1)
-    .collect()
-    .delimited_by(just(Token::OpenBrace), just(Token::CloseBrace))
-    .try_map(|list: Vec<String>, span: SimpleSpan| {
-        let mut result = Vec::new();
-        for (i, val) in list.into_iter().enumerate() {
-            let span = SimpleSpan::new(span.start() + i, span.start() + i + 1);
-            match conversion_fn(val.as_str()) {
-                Ok(val) => result.push(val),
-                Err(e) => return Err(Rich::custom(span, format!("{e}"))),
+
+    /// Expects a token kind of Token::Value or a Token::QuotedValue.
+    /// Parses the value data with the help of `value_parser`.
+    /// If succeeds, advances the token.
+    fn parse_value<F, T, E>(
+        &mut self,
+        value_kind: TokenKind,
+        value_parser: &F,
+        of_kind: &'static str,
+    ) -> Result<T, ErrorKind>
+    where
+        F: Fn(&BStr) -> Result<T, E>,
+        E: Into<String>,
+    {
+        let val = match self.current.kind {
+            TokenKind::QuotedValue if value_kind == TokenKind::QuotedValue => {
+                let val = self.current_data();
+                // Remove the quotes
+                &val[1..val.len() - 1]
+            }
+            TokenKind::Value if value_kind == TokenKind::Value => self.current_data(),
+            _ => {
+                return Err(ErrorKind::unexpected(
+                    Expected::label(of_kind),
+                    self.current,
+                ));
+            }
+        };
+        let val = value_parser(val).map_err(|e| ErrorKind::parse(self.current, e))?;
+        // We've parse the value. Advance the current token to point to the next token
+        self.advance();
+        Ok(val)
+    }
+
+    /// Parses the upcoming tokens as a list of values.
+    /// Expected a list in the format of: `{ <val>, <val>, <val> }` where each of the
+    /// `<val>` are parsed with the help of `parse_value`.
+    fn parse_list<F, T, E>(
+        &mut self,
+        value_kind: TokenKind,
+        value_parser: &F,
+        of_kind: &'static str,
+    ) -> Result<Vec<T>, ErrorKind>
+    where
+        F: Fn(&BStr) -> Result<T, E>,
+        E: Into<String>,
+    {
+        let mut values = Vec::new();
+        self.advance_if(TokenKind::OpenBrace)?;
+        loop {
+            let value = self.parse_value(value_kind, value_parser, of_kind)?;
+            values.push(value);
+            match self.current.kind {
+                TokenKind::Comma => {
+                    self.advance();
+                    continue;
+                }
+                TokenKind::CloseBrace => {
+                    self.advance();
+                    break;
+                }
+                _ => {
+                    return Err(ErrorKind::unexpected(
+                        Expected::token_kind(TokenKind::CloseBrace),
+                        self.current,
+                    ));
+                }
             }
         }
-        Ok(result)
-    })
-}
+        Ok(values)
+    }
 
-/// Parse a comparison token
-fn comparison_operations<'src>()
--> impl Parser<'src, &'src [Token], CmpOp, extra::Err<Rich<'src, Token>>> + Clone {
-    choice((
-        just(Token::Equal).to(CmpOp::Equal),
-        just(Token::NotEqual).to(CmpOp::NotEqual),
-        just(Token::LessThan).to(CmpOp::LessThan),
-        just(Token::LessEqual).to(CmpOp::LessEqual),
-        just(Token::GreaterThan).to(CmpOp::GreaterThan),
-        just(Token::GreaterEqual).to(CmpOp::GreaterEqual),
-    ))
-    .labelled("comparison operations")
-}
+    /// Parse a token as a comparison operator
+    fn parse_comparison_operator(&mut self) -> Result<CmpOp, ErrorKind> {
+        let cmp_op = match self.current.kind {
+            TokenKind::Equal => CmpOp::Equal,
+            TokenKind::NotEqual => CmpOp::NotEqual,
+            TokenKind::LessThan => CmpOp::LessThan,
+            TokenKind::LessEqual => CmpOp::LessEqual,
+            TokenKind::GreaterThan => CmpOp::GreaterThan,
+            TokenKind::GreaterEqual => CmpOp::GreaterEqual,
+            _ => {
+                return Err(ErrorKind::unexpected(
+                    Expected::label("comparison operator"),
+                    self.current,
+                ));
+            }
+        };
+        self.advance();
+        Ok(cmp_op)
+    }
 
-/// Parse the set of possible tokens that create a `EthernetOperations`
-fn parse_ethernet_operations<'src>()
--> impl Parser<'src, &'src [Token], EthOp, extra::Err<Rich<'src, Token>>> + Clone {
-    let compare = comparison_operations()
-        .then(value_to_t(&parse_mac_addr, ValueMode::Unquoted).labelled("mac-address"))
-        .map(|(op, val)| EthOp::compare(op, val));
-    let match_any = just(Token::In)
-        .then(values_to_t(&parse_mac_addr, ValueMode::Unquoted).labelled("list of mac-address"))
-        .map(|(_, list)| EthOp::match_any(list));
-    let contains = just(Token::Contains)
-        .ignore_then(
-            value_to_t(&parse_byte_string, ValueMode::Unquoted)
-                .labelled("byte-string")
-                .or(value_to_t(&parse_escaped_byte_string, ValueMode::Quoted)
-                    .labelled("quoted escaped byte-string")),
-        )
-        .map(EthOp::contains);
-    let regex = just(Token::RegexMatch)
-        .ignore_then(value_to_t(&parse_regex, ValueMode::Quoted).labelled("quoted regex"))
-        .map(EthOp::regex_match);
-    compare
-        .or(match_any)
-        .or(contains)
-        .or(regex)
-        .labelled("ethernet operations")
-}
-
-/// Parse the set of possible tokens that create a `IpOperations`
-fn parse_ip_operations<'src>()
--> impl Parser<'src, &'src [Token], IpOp, extra::Err<Rich<'src, Token>>> + Clone {
-    let compare = comparison_operations()
-        .then(value_to_t(&parse_ip_net, ValueMode::Unquoted).labelled("ip-address or cidr"))
-        .map(|(op, val)| IpOp::compare(op, val));
-    let match_any = just(Token::In)
-        .then(
-            values_to_t(&parse_ip_net, ValueMode::Unquoted).labelled("list of ip-address or cidr"),
-        )
-        .map(|(_, list)| IpOp::match_any(list));
-    compare.or(match_any).labelled("ip operations")
-}
-
-/// Parse the set of possible tokens that create a `ValOperations`
-fn parse_val_operations<'src>()
--> impl Parser<'src, &'src [Token], ValOp, extra::Err<Rich<'src, Token>>> + Clone {
-    let compare = comparison_operations()
-        .then(value_to_t(&parse_u16, ValueMode::Unquoted).labelled("number"))
-        .map(|(op, val)| ValOp::compare(op, val));
-    let match_any = just(Token::In)
-        .then(values_to_t(&parse_u16, ValueMode::Unquoted).labelled("list of numbers"))
-        .map(|(_, list)| ValOp::match_any(list));
-    compare.or(match_any).labelled("value operations")
-}
-
-/// Parse the set of possible tokens that create a `PayloadOperations`
-fn parse_payload_operations<'src>()
--> impl Parser<'src, &'src [Token], PayloadOp, extra::Err<Rich<'src, Token>>> + Clone {
-    let contains = just(Token::Contains)
-        .ignore_then(
-            value_to_t(&parse_byte_string, ValueMode::Unquoted)
-                .labelled("byte-string")
-                .or(value_to_t(&parse_escaped_byte_string, ValueMode::Quoted)
-                    .labelled("quoted escaped byte-string")),
-        )
-        .map(PayloadOp::contains);
-    let regex = just(Token::RegexMatch)
-        .ignore_then(value_to_t(&parse_regex, ValueMode::Quoted).labelled("quoted regex"))
-        .map(PayloadOp::regex_match);
-    contains.or(regex).labelled("payload operations")
-}
-
-/// Parse the set of possible tokens that create a `PayloadLenOperations`
-fn parse_payload_len_operations<'src>()
--> impl Parser<'src, &'src [Token], PayloadLenOp, extra::Err<Rich<'src, Token>>> + Clone {
-    let compare = comparison_operations()
-        .then(value_to_t(&parse_u16, ValueMode::Unquoted).labelled("number"))
-        .map(|(op, val)| PayloadLenOp::compare(op, val));
-    compare.labelled("payload length operations")
-}
-
-/// Parse a clause composed of a single term, in the form of `tcp`, `udp`, `vlan`
-fn parse_single_term_clause<'src>()
--> impl Parser<'src, &'src [Token], Clause, extra::Err<Rich<'src, Token>>> + Clone {
-    just(Token::LitTcp)
-        .to(Clause::IsTcp)
-        .or(just(Token::LitUdp).to(Clause::IsUdp))
-        .or(just(Token::LitVlan).to(Clause::IsVlan))
-        .labelled("single term clause")
-}
-
-/// Parse a clause composed of a single term, in the form of `tcp`, `udp`, `vlan`
-fn parse_multiple_terms_clause<'src>()
--> impl Parser<'src, &'src [Token], Clause, extra::Err<Rich<'src, Token>>> + Clone {
-    choice((
-        just(Token::LitEthAddr)
-            .ignore_then(parse_ethernet_operations())
-            .map(Clause::EthAddr),
-        just(Token::LitEthDst)
-            .ignore_then(parse_ethernet_operations())
-            .map(Clause::EthDst),
-        just(Token::LitEthSrc)
-            .ignore_then(parse_ethernet_operations())
-            .map(Clause::EthSrc),
-        just(Token::LitIpAddr)
-            .ignore_then(parse_ip_operations())
-            .map(Clause::IpAddr),
-        just(Token::LitIpDst)
-            .ignore_then(parse_ip_operations())
-            .map(Clause::IpDst),
-        just(Token::LitIpSrc)
-            .ignore_then(parse_ip_operations())
-            .map(Clause::IpSrc),
-        just(Token::LitVlanId)
-            .ignore_then(parse_val_operations())
-            .map(Clause::VlanId),
-        just(Token::LitPort)
-            .ignore_then(parse_val_operations())
-            .map(Clause::Port),
-        just(Token::LitPortDst)
-            .ignore_then(parse_val_operations())
-            .map(Clause::PortDst),
-        just(Token::LitPortSrc)
-            .ignore_then(parse_val_operations())
-            .map(Clause::PortSrc),
-        just(Token::LitPayload)
-            .ignore_then(parse_payload_operations())
-            .map(Clause::Payload),
-        just(Token::LitPayloadLen)
-            .ignore_then(parse_payload_len_operations())
-            .map(Clause::PayloadLen),
-    ))
-    .labelled("multiple terms clause")
-}
-
-/// Parse an AST made of `Token` into a `Expression`
-pub(crate) fn expression_parser<'src>()
--> impl Parser<'src, &'src [Token], Spanned<Expression>, extra::Err<Rich<'src, Token>>> {
-    let clause = parse_single_term_clause()
-        .or(parse_multiple_terms_clause())
-        .map(Expression::Single);
-
-    recursive(|nested| {
-        let plain_or_nested =
-            clause.or(nested.delimited_by(just(Token::OpenParen), just(Token::CloseParen)));
-
-        let not_expr = just(Token::Not)
-            .ignore_then(plain_or_nested.clone())
-            .map(Expression::not);
-
-        let expr = plain_or_nested.or(not_expr);
-
-        expr.clone()
-            .then(
-                just(Token::Or)
-                    .or(just(Token::And))
-                    .then(expr.clone())
-                    .repeated()
-                    .collect::<Vec<_>>(),
-            )
-            .map(|(lhs, mut list)| {
-                // We want to preserve the order of operations that the user requested
-                list.reverse();
-                let mut lhs = lhs;
-                while let Some((op, rhs)) = list.pop() {
-                    lhs = match op {
-                        Token::And => lhs.and(rhs),
-                        Token::Or => lhs.or(rhs),
-                        _ => unreachable!(),
-                    }
+    fn parse_ethernet_operations(&mut self) -> Result<EthOp, ErrorKind> {
+        let eth_op = match self.parse_comparison_operator() {
+            Ok(cmp_op) => {
+                let mac = self.parse_value(TokenKind::Value, &parse_mac_addr, "mac-address")?;
+                EthOp::compare(cmp_op, mac)
+            }
+            _ => match self.current.kind {
+                TokenKind::In => {
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_mac_addr, "list of mac-address")?;
+                    EthOp::match_any(values)
                 }
-                lhs
-            })
-    }) // Add span information
-    .map_with_span(Spanned)
+                TokenKind::Contains => {
+                    self.advance();
+                    let bytes = match self.current.kind == TokenKind::QuotedValue {
+                        true => self.parse_value(
+                            TokenKind::QuotedValue,
+                            &parse_escaped_byte_string,
+                            "quoted escaped byte-string",
+                        )?,
+                        false => {
+                            self.parse_value(TokenKind::Value, &parse_byte_string, "byte-string")?
+                        }
+                    };
+                    EthOp::contains(bytes)
+                }
+                TokenKind::RegexMatch => {
+                    self.advance();
+                    let regex = self.parse_value(
+                        TokenKind::QuotedValue,
+                        &parse_regex,
+                        "quoted regex string",
+                    )?;
+                    EthOp::regex_match(regex)
+                }
+                _ => {
+                    return Err(ErrorKind::unexpected(
+                        Expected::label("an ethernet operation"),
+                        self.current,
+                    ));
+                }
+            },
+        };
+        Ok(eth_op)
+    }
+
+    fn parse_ip_operations(&mut self) -> Result<IpOp, ErrorKind> {
+        let ip_op = match self.parse_comparison_operator() {
+            Ok(cmp_op) => {
+                let ip = self.parse_value(TokenKind::Value, &parse_ip_net, "ip-address")?;
+                IpOp::compare(cmp_op, ip)
+            }
+            _ => match self.current.kind {
+                TokenKind::In => {
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_ip_net, "a list of ip-addresses")?;
+                    IpOp::match_any(values)
+                }
+                _ => {
+                    return Err(ErrorKind::unexpected(
+                        Expected::label("an ip operation"),
+                        self.current,
+                    ));
+                }
+            },
+        };
+        Ok(ip_op)
+    }
+
+    fn parse_value_operations(&mut self) -> Result<ValOp, ErrorKind> {
+        let val_op = match self.parse_comparison_operator() {
+            Ok(cmp_op) => {
+                let num = self.parse_value(TokenKind::Value, &parse_u16, "number")?;
+                ValOp::compare(cmp_op, num)
+            }
+            _ => match self.current.kind {
+                TokenKind::In => {
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_u16, "list of numbers")?;
+                    ValOp::match_any(values)
+                }
+                _ => {
+                    return Err(ErrorKind::unexpected(
+                        Expected::label("a value operation"),
+                        self.current,
+                    ));
+                }
+            },
+        };
+        Ok(val_op)
+    }
+
+    fn parse_payload_operations(&mut self) -> Result<PayloadOp, ErrorKind> {
+        let payload_op = match self.current.kind {
+            TokenKind::Contains => {
+                self.advance();
+                let bytes = match self.current.kind == TokenKind::QuotedValue {
+                    true => self.parse_value(
+                        TokenKind::QuotedValue,
+                        &parse_escaped_byte_string,
+                        "quoted escaped byte-string",
+                    )?,
+                    false => {
+                        self.parse_value(TokenKind::Value, &parse_byte_string, "byte-string")?
+                    }
+                };
+                PayloadOp::contains(bytes)
+            }
+            TokenKind::RegexMatch => {
+                self.advance();
+                let regex =
+                    self.parse_value(TokenKind::QuotedValue, &parse_regex, "regex string")?;
+                PayloadOp::regex_match(regex)
+            }
+            _ => {
+                return Err(ErrorKind::unexpected(
+                    Expected::label("a payload operation"),
+                    self.current,
+                ));
+            }
+        };
+        Ok(payload_op)
+    }
+
+    fn parse_payload_len_operations(&mut self) -> Result<PayloadLenOp, ErrorKind> {
+        let val_op = match self.parse_comparison_operator() {
+            Ok(cmp_op) => {
+                let num = self.parse_value(TokenKind::Value, &parse_u16, "number")?;
+                PayloadLenOp::compare(cmp_op, num)
+            }
+            _ => {
+                return Err(ErrorKind::unexpected(
+                    Expected::label("a payload length operation"),
+                    self.current,
+                ));
+            }
+        };
+        Ok(val_op)
+    }
+
+    fn parse_single_clause_expression(&mut self) -> Result<Expression, ErrorKind> {
+        let clause = match self.current.kind {
+            TokenKind::LitTcp => {
+                self.advance();
+                Clause::IsTcp
+            }
+            TokenKind::LitUdp => {
+                self.advance();
+                Clause::IsUdp
+            }
+            TokenKind::LitVlan => {
+                self.advance();
+                Clause::IsVlan
+            }
+            TokenKind::LitEthAddr => {
+                self.advance();
+                self.parse_ethernet_operations().map(Clause::EthAddr)?
+            }
+            TokenKind::LitEthDst => {
+                self.advance();
+                self.parse_ethernet_operations().map(Clause::EthDst)?
+            }
+            TokenKind::LitEthSrc => {
+                self.advance();
+                self.parse_ethernet_operations().map(Clause::EthSrc)?
+            }
+            TokenKind::LitIpAddr => {
+                self.advance();
+                self.parse_ip_operations().map(Clause::IpAddr)?
+            }
+            TokenKind::LitIpDst => {
+                self.advance();
+                self.parse_ip_operations().map(Clause::IpDst)?
+            }
+            TokenKind::LitIpSrc => {
+                self.advance();
+                self.parse_ip_operations().map(Clause::IpSrc)?
+            }
+            TokenKind::LitVlanId => {
+                self.advance();
+                self.parse_value_operations().map(Clause::VlanId)?
+            }
+            TokenKind::LitPort => {
+                self.advance();
+                self.parse_value_operations().map(Clause::Port)?
+            }
+            TokenKind::LitPortDst => {
+                self.advance();
+                self.parse_value_operations().map(Clause::PortDst)?
+            }
+            TokenKind::LitPortSrc => {
+                self.advance();
+                self.parse_value_operations().map(Clause::PortSrc)?
+            }
+            TokenKind::LitPayload => {
+                self.advance();
+                self.parse_payload_operations().map(Clause::Payload)?
+            }
+            TokenKind::LitPayloadLen => {
+                self.advance();
+                self.parse_payload_len_operations()
+                    .map(Clause::PayloadLen)?
+            }
+            _ => {
+                return Err(ErrorKind::unexpected(
+                    Expected::label("an expression"),
+                    self.current,
+                ));
+            }
+        };
+
+        Ok(Expression::Single(clause))
+    }
+
+    fn parse_nested_expression(&mut self) -> Result<Expression, ErrorKind> {
+        match self.current.kind {
+            TokenKind::OpenParen => {
+                self.advance();
+                let expr = self.parse_expression()?;
+                self.advance_if(TokenKind::CloseParen)?;
+                Ok(expr)
+            }
+            TokenKind::Not => {
+                self.advance();
+                let expr = self.parse_nested_expression()?;
+                Ok(Expression::not(expr))
+            }
+            _ => self.parse_single_clause_expression(),
+        }
+    }
+
+    /// Parse a complete expression. Recursive.
+    fn parse_expression(&mut self) -> Result<Expression, ErrorKind> {
+        // Parse first clause or grouped/not expression
+        let mut expr = self.parse_nested_expression()?;
+        loop {
+            match self.current.kind {
+                TokenKind::And => {
+                    self.advance();
+                    let next_expr = self.parse_nested_expression()?;
+                    expr = expr.and(next_expr);
+                }
+                TokenKind::Or => {
+                    self.advance();
+                    let next_expr = self.parse_nested_expression()?;
+                    expr = expr.or(next_expr);
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
+    }
+
+    /// parser entrypoint. Can only be called once per tokens set.
+    pub(crate) fn parse(mut self) -> Result<Expression, ErrorKind> {
+        let expr = self.parse_expression()?;
+        // Validate we have reached the end of the input
+        match self.current.kind == TokenKind::EoF {
+            true => Ok(expr),
+            false => Err(ErrorKind::unexpected(
+                Expected::token_kind(TokenKind::EoF),
+                self.current,
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        expression_parser,
-        parse_byte_string,
-        parse_escaped_byte_string,
-        parse_ethernet_operations,
-        parse_ip_net,
-        parse_ip_operations,
-        parse_mac_addr,
-        parse_multiple_terms_clause,
-        parse_payload_len_operations,
-        parse_payload_operations,
-        parse_regex,
-        parse_single_term_clause,
-        parse_u16,
-        parse_val_operations,
+        ErrorKind,
+        Parser,
     };
     use crate::{
         expression::{
@@ -430,250 +453,78 @@ mod tests {
             RegexMatcher,
             ValOp,
         },
-        lexer::Token,
+        input::Input,
+        lexer::{
+            Lexer,
+            TokenKind,
+        },
         mac_addr::MacAddr,
         test_utils::init_test_logging,
         Expression,
     };
-    use chumsky::Parser;
     use ipnet::IpNet;
     use regex::bytes::Regex;
     use tracing::info;
 
-    #[test]
-    fn test_parse_u16() {
-        init_test_logging();
-
-        for val in [u16::MIN, u16::MAX] {
-            info!("Parsing \"{val}\" as u16 - should succeed");
-            let num = parse_u16(val.to_string().as_str()).unwrap();
-            assert_eq!(val, num);
-        }
-
-        for val in [
-            "25d".to_string(),
-            "-1".to_string(),
-            (u16::MAX as u32 + 1).to_string(),
-            "".to_string(),
-        ] {
-            info!("Parsing \"{val}\" as u16 - should fail");
-            let res = parse_u16(val.to_string().as_str());
-            assert!(res.is_err());
-        }
-    }
-
-    #[test]
-    fn test_parse_mac_addr() {
-        init_test_logging();
-
-        let expected_mac_addr = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
-
-        for val in [
-            "ab-cd-ef-01-23-45".to_string(),
-            "ab-cd-ef-01-23-45".to_ascii_uppercase(),
-            "ab:cd:ef:01:23:45".to_string(),
-            "ab:cd:ef:01:23:45".to_ascii_uppercase(),
-            "abcdef012345".to_string(),
-            "abcdef012345".to_ascii_uppercase(),
-            "abc.def.012.345".to_string(),
-            "abc.def.012.345".to_ascii_uppercase(),
-        ] {
-            info!("Parsing \"{val}\" as mac-address - should succeed");
-            let mac_addr = parse_mac_addr(val.as_str()).unwrap();
-            assert_eq!(mac_addr, expected_mac_addr);
-        }
-
-        for val in [
-            "ab-cd-ef-01-23",
-            "12345",
-            "some words",
-            "-ab-cd-ef-01-23-45",
-            "ab-cd-ef-01-23-45-",
-            "",
-        ] {
-            info!("Parsing \"{val}\" as mac-address - should fail");
-            let res = parse_mac_addr(val);
-            assert!(res.is_err());
-        }
-    }
-
-    #[test]
-    fn test_parse_regex() {
-        init_test_logging();
-
-        for val in [
-            r"(ASCII|\x22\x12)",
-            "(?i)CaSeInSeNsItIvE",
-            "some words",
-            r"^\x00BOOM\x00",
-            "[[:ascii:]]{100}",
-            "GET /(secret|password)",
-        ] {
-            info!("Parsing \"{val}\" as regex - should succeed");
-            let res = parse_regex(val);
-            assert!(res.is_ok());
-        }
-
-        for val in ["(1234", r"\"] {
-            info!("Parsing \"{val}\" as regex - should fail");
-            let res = parse_regex(val);
-            assert!(res.is_err());
-        }
-    }
-
-    #[test]
-    fn test_parse_byte_string() {
-        init_test_logging();
-
-        for (val, expected) in [
-            ("00", vec![0]),
-            ("0E", vec![14]),
-            ("001122334455", vec![0, 17, 34, 51, 68, 85]),
-            ("00:11:22:33:44:55", vec![0, 17, 34, 51, 68, 85]),
-        ] {
-            info!("Parsing \"{val}\" as byte string - should succeed");
-            let res = parse_byte_string(val).unwrap();
-            assert_eq!(res, expected);
-        }
-
-        for val in ["", "0", "1", "a", "A", "x1", "~1", "10Z1"] {
-            info!("Parsing \"{val}\" as byte string - should fail");
-            let res = parse_byte_string(val);
-            assert!(res.is_err());
-        }
-    }
-
-    #[test]
-    fn test_parse_escaped_string_as_byte() {
-        init_test_logging();
-
-        for (val, expected) in [
-            ("", b"".to_vec()),
-            (r"\", b"\\".to_vec()),
-            ("simple string", b"simple string".to_vec()),
-            (r"\\escaped \\ slash \\", b"\\escaped \\ slash \\".to_vec()),
-            (r"not an escape \w", b"not an escape \\w".to_vec()),
-            (r"foo\nbar\xFFbaz", b"foo\nbar\xFFbaz".to_vec()),
-            (r"\n", b"\n".to_vec()),
-            (r"new line at the end\n", b"new line at the end\n".to_vec()),
-            (
-                r"\nnew line at the start",
-                b"\nnew line at the start".to_vec(),
-            ),
-            (r"something \t else", b"something \t else".to_vec()),
-            (r"Null NULL NUL \x00", b"Null NULL NUL \x00".to_vec()),
-            (r"maybe nul \x0", b"maybe nul \\x0".to_vec()),
-            (r"windows style nl \r\n", b"windows style nl \r\n".to_vec()),
-            (r"\xa", b"\\xa".to_vec()),
-            (r"\x1", b"\\x1".to_vec()),
-            (r"\x-", b"\\x-".to_vec()),
-            (r"\x12\xa1\xA1", b"\x12\xa1\xA1".to_vec()),
-            (r"\xaa\xbb\xcc", b"\xaa\xbb\xcc".to_vec()),
-            (r"invalid escape \xa~", b"invalid escape \\xa~".to_vec()),
-            (r"invalid escape \x~~", b"invalid escape \\x~~".to_vec()),
-            (r"invalid escape \x~a", b"invalid escape \\x~a".to_vec()),
-            (r"invalid escape \x", b"invalid escape \\x".to_vec()),
-        ] {
-            info!("Parsing \"{val}\" as escaped bytes - should succeed");
-            let res = parse_escaped_byte_string(val).unwrap();
-            assert_eq!(res, expected);
-        }
-    }
-
-    #[test]
-    fn test_parse_ip_net() {
-        init_test_logging();
-
-        for val in [
-            "127.0.0.1",
-            "192.168.12.34/16",
-            "10.1.1.0/24",
-            "10.1.1.0/32",
-            "10.1.1.0",
-            "fd00::/32",
-            "fd00::/16",
-            "fd00::1:2:3:4/16",
-            "1:2::3:4",
-            "1:2:3:4:5:6:77.77.88.88",
-            "1:2:3:4:5:6:4d4d:5858",
-            "fe80::1.2.3.4",
-            "::1",
-            "1::",
-            "::",
-        ] {
-            info!("Parsing \"{val}\" as ip - should succeed");
-            let res = parse_ip_net(val);
-            assert!(res.is_ok());
-        }
-
-        for val in ["10.1.1", "fd00:", ""] {
-            info!("Parsing \"{val}\" as ip - should fail");
-            let res = parse_ip_net(val);
-            assert!(res.is_err());
-        }
+    // A helper function to fully parse an expression
+    fn parse(input: &str) -> Result<Expression, ErrorKind> {
+        let input = Input::new(input).unwrap();
+        let tokens = Lexer::new(input).lex();
+        // Assert that the lexing stage finished successfully
+        assert!(tokens.iter().all(|t| t.kind != TokenKind::Error));
+        Parser::new(input, tokens).parse()
     }
 
     #[test]
     fn test_parse_ethernet_operations_success() {
         init_test_logging();
 
+        let inputs = [
+            "eth.addr == ab-cd-ef-01-23-45",
+            "eth.addr ne ab:cd:ef:01:23:45",
+            "eth.dst > ab:cd:ef:01:23:45",
+            "eth.src >= ab-cd-ef-01-23-45",
+            "eth.src < ab-cd-ef-01-23-45",
+            "eth.addr <= ab-cd-ef-01-23-45",
+            "eth.addr eq abcdef012345",
+            "eth.addr == ab:cd:ef:01:23:45",
+            "eth.addr == abc.def.012.345",
+            "eth.src in {abcdef012345, abc.def.012.345}",
+            "eth.dst in { abcdef012345 }",
+            "eth.addr contains ab",
+            "eth.addr contains ab:cd:ef",
+            "eth.addr contains 'string'",
+            r#"eth.dst contains "\x00string""#,
+            "eth.dst ~ 'string'",
+        ];
         let expected_mac_addr = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
-        let mac_val = Token::Value("ab-cd-ef-01-23-45".into());
         let regex_matcher = Regex::new("string").unwrap().into();
-
-        let cases = [
-            vec![Token::Equal, mac_val.clone()],
-            vec![Token::NotEqual, mac_val.clone()],
-            vec![Token::GreaterThan, mac_val.clone()],
-            vec![Token::GreaterEqual, mac_val.clone()],
-            vec![Token::LessThan, mac_val.clone()],
-            vec![Token::LessEqual, mac_val],
-            vec![Token::Equal, Token::Value("abcdef012345".into())],
-            vec![Token::Equal, Token::Value("ab:cd:ef:01:23:45".into())],
-            vec![Token::Equal, Token::Value("abc.def.012.345".into())],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("abcdef012345".into()),
-                Token::Comma,
-                Token::Value("abc.def.012.345".into()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("abcdef012345".into()),
-                Token::CloseBrace,
-            ],
-            vec![Token::Contains, Token::Value("ab".into())],
-            vec![Token::Contains, Token::Value("ab:cd:ef".into())],
-            vec![Token::Contains, Token::QuotedValue("string".into())],
-            vec![Token::Contains, Token::QuotedValue(r"\x00string".into())],
-            vec![Token::RegexMatch, Token::QuotedValue(r"string".into())],
-        ];
-        let expected_results = [
-            EthOp::compare(CmpOp::Equal, expected_mac_addr),
-            EthOp::compare(CmpOp::NotEqual, expected_mac_addr),
-            EthOp::compare(CmpOp::GreaterThan, expected_mac_addr),
-            EthOp::compare(CmpOp::GreaterEqual, expected_mac_addr),
-            EthOp::compare(CmpOp::LessThan, expected_mac_addr),
-            EthOp::compare(CmpOp::LessEqual, expected_mac_addr),
-            EthOp::compare(CmpOp::Equal, expected_mac_addr),
-            EthOp::compare(CmpOp::Equal, expected_mac_addr),
-            EthOp::compare(CmpOp::Equal, expected_mac_addr),
-            EthOp::match_any(vec![expected_mac_addr, expected_mac_addr]),
-            EthOp::match_any(vec![expected_mac_addr]),
-            EthOp::contains(vec![0xab]),
-            EthOp::contains(vec![0xab, 0xcd, 0xef]),
-            EthOp::contains(b"string".to_vec()),
-            EthOp::contains(b"\x00string".to_vec()),
-            EthOp::regex_match(regex_matcher),
+        let expected = [
+            Clause::EthAddr(EthOp::compare(CmpOp::Equal, expected_mac_addr)),
+            Clause::EthAddr(EthOp::compare(CmpOp::NotEqual, expected_mac_addr)),
+            Clause::EthDst(EthOp::compare(CmpOp::GreaterThan, expected_mac_addr)),
+            Clause::EthSrc(EthOp::compare(CmpOp::GreaterEqual, expected_mac_addr)),
+            Clause::EthSrc(EthOp::compare(CmpOp::LessThan, expected_mac_addr)),
+            Clause::EthAddr(EthOp::compare(CmpOp::LessEqual, expected_mac_addr)),
+            Clause::EthAddr(EthOp::compare(CmpOp::Equal, expected_mac_addr)),
+            Clause::EthAddr(EthOp::compare(CmpOp::Equal, expected_mac_addr)),
+            Clause::EthAddr(EthOp::compare(CmpOp::Equal, expected_mac_addr)),
+            Clause::EthSrc(EthOp::match_any(vec![expected_mac_addr, expected_mac_addr])),
+            Clause::EthDst(EthOp::match_any(vec![expected_mac_addr])),
+            Clause::EthAddr(EthOp::contains(vec![0xab])),
+            Clause::EthAddr(EthOp::contains(vec![0xab, 0xcd, 0xef])),
+            Clause::EthAddr(EthOp::contains(b"string".to_vec())),
+            Clause::EthDst(EthOp::contains(b"\x00string".to_vec())),
+            Clause::EthDst(EthOp::regex_match(regex_matcher)),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as ethernet operations - should succeed");
-            let res = parse_ethernet_operations().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as ethernet operations - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -681,30 +532,20 @@ mod tests {
     fn test_parse_ethernet_operations_failure() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::Value("".into())],
-            vec![Token::Equal, Token::QuotedValue("ab-cd-ef-01-23-45".into())],
-            vec![Token::Equal, Token::Value("string".into())],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("ab-cd-ef-01-23-45".into()),
-                Token::Comma,
-            ],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("01-23-45".into()),
-                Token::Comma,
-                Token::CloseBrace,
-            ],
-            vec![Token::In, Token::OpenBrace, Token::CloseBrace],
+        let inputs = [
+            "eth.src ==   ",
+            "eth.src == ''",
+            "eth.src == 'ab-cd-ef-01-23-45'",
+            "eth.src == string",
+            "eth.src in { ab-cd-ef-01-23-45,",
+            "eth.src in { ab-cd-ef-01-23-45, }",
+            "eth.src in { }",
         ];
 
-        for tokens in cases {
-            info!("Parsing {tokens:?} as ethernet operations - should fail");
-            let res = parse_ethernet_operations().parse(&tokens);
-            assert!(res.has_errors());
+        for input in inputs {
+            info!("Parsing '{input}' as ethernet operations - should fail");
+            let res = parse(input);
+            assert!(res.is_err());
         }
     }
 
@@ -714,38 +555,34 @@ mod tests {
 
         let ip: IpNet = "192.168.1.1/32".parse().unwrap();
 
-        let cases = [
-            vec![Token::Equal, Token::Value("192.168.1.1".into())],
-            vec![Token::Equal, Token::Value("192.168.1.1/32".into())],
-            vec![Token::NotEqual, Token::Value("192.168.1.1".into())],
-            vec![Token::GreaterThan, Token::Value("192.168.1.1".into())],
-            vec![Token::GreaterEqual, Token::Value("192.168.1.1".into())],
-            vec![Token::LessThan, Token::Value("192.168.1.1".into())],
-            vec![Token::LessEqual, Token::Value("192.168.1.1".into())],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::Comma,
-                Token::Value("192.168.1.1/32".into()),
-                Token::CloseBrace,
-            ],
+        let inputs = [
+            "ip.addr eq 192.168.1.1",
+            "ip.src == 192.168.1.1/32",
+            "ip.dst != 192.168.1.1",
+            "ip.addr gt 192.168.1.1",
+            "ip.addr ge 192.168.1.1",
+            "ip.addr lt 192.168.1.1",
+            "ip.addr le 192.168.1.1",
+            "ip.addr in {192.168.1.1, 192.168.1.1/32}",
         ];
-        let expected_results = [
-            IpOp::compare(CmpOp::Equal, ip),
-            IpOp::compare(CmpOp::Equal, ip),
-            IpOp::compare(CmpOp::NotEqual, ip),
-            IpOp::compare(CmpOp::GreaterThan, ip),
-            IpOp::compare(CmpOp::GreaterEqual, ip),
-            IpOp::compare(CmpOp::LessThan, ip),
-            IpOp::compare(CmpOp::LessEqual, ip),
-            IpOp::match_any(vec![ip, ip]),
+        let expected = [
+            Clause::IpAddr(IpOp::compare(CmpOp::Equal, ip)),
+            Clause::IpSrc(IpOp::compare(CmpOp::Equal, ip)),
+            Clause::IpDst(IpOp::compare(CmpOp::NotEqual, ip)),
+            Clause::IpAddr(IpOp::compare(CmpOp::GreaterThan, ip)),
+            Clause::IpAddr(IpOp::compare(CmpOp::GreaterEqual, ip)),
+            Clause::IpAddr(IpOp::compare(CmpOp::LessThan, ip)),
+            Clause::IpAddr(IpOp::compare(CmpOp::LessEqual, ip)),
+            Clause::IpAddr(IpOp::match_any(vec![ip, ip])),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as ip operations - should succeed");
-            let res = parse_ip_operations().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as ip operations - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -753,32 +590,20 @@ mod tests {
     fn test_parse_ip_operations_failure() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::QuotedValue("55".into())],
-            vec![Token::Equal, Token::Value("not an ip".into())],
-            vec![Token::In, Token::Value("192.168.1.1".into())],
-            vec![Token::GreaterThan, Token::Equal],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::Comma,
-                Token::Value("192.168.1.1".into()),
-            ],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::Comma,
-                Token::CloseBrace,
-            ],
-            vec![Token::In, Token::OpenBrace, Token::CloseBrace],
+        let inputs = [
+            "ip.addr == 55",
+            "ip.addr == not-an-ip",
+            "ip.addr in 192.168.1.1",
+            "ip.addr > ==",
+            "ip.addr in { 192.168.1.1, 192.168.1.1",
+            "ip.addr in { 192.168.1.1, 192.168.1.1, }",
+            "ip.addr in { }",
         ];
 
-        for tokens in cases {
-            info!("Parsing {tokens:?} as ip operations - should fail");
-            let res = parse_ip_operations().parse(&tokens);
-            assert!(res.has_errors());
+        for input in inputs {
+            info!("Parsing '{input}' as ip operations - should fail");
+            let res = parse(input);
+            assert!(res.is_err());
         }
     }
 
@@ -786,36 +611,32 @@ mod tests {
     fn test_parse_val_operations_success() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::Value("55".into())],
-            vec![Token::NotEqual, Token::Value("55".into())],
-            vec![Token::GreaterThan, Token::Value("55".into())],
-            vec![Token::GreaterEqual, Token::Value("55".into())],
-            vec![Token::LessThan, Token::Value("55".into())],
-            vec![Token::LessEqual, Token::Value("55".into())],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::Comma,
-                Token::Value("2".into()),
-                Token::CloseBrace,
-            ],
+        let inputs = [
+            "vlan.id == 55",
+            "vlan.id != 55",
+            "vlan.id > 55",
+            "vlan.id >= 55",
+            "vlan.id < 55",
+            "vlan.id <= 55",
+            "vlan.id in {1, 2}",
         ];
-        let expected_results = [
-            ValOp::compare(CmpOp::Equal, 55),
-            ValOp::compare(CmpOp::NotEqual, 55),
-            ValOp::compare(CmpOp::GreaterThan, 55),
-            ValOp::compare(CmpOp::GreaterEqual, 55),
-            ValOp::compare(CmpOp::LessThan, 55),
-            ValOp::compare(CmpOp::LessEqual, 55),
-            ValOp::match_any(vec![1, 2]),
+        let expected = [
+            Clause::VlanId(ValOp::compare(CmpOp::Equal, 55)),
+            Clause::VlanId(ValOp::compare(CmpOp::NotEqual, 55)),
+            Clause::VlanId(ValOp::compare(CmpOp::GreaterThan, 55)),
+            Clause::VlanId(ValOp::compare(CmpOp::GreaterEqual, 55)),
+            Clause::VlanId(ValOp::compare(CmpOp::LessThan, 55)),
+            Clause::VlanId(ValOp::compare(CmpOp::LessEqual, 55)),
+            Clause::VlanId(ValOp::match_any(vec![1, 2])),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as value operations - should succeed");
-            let res = parse_val_operations().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as a value operations - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -823,32 +644,22 @@ mod tests {
     fn test_parse_val_operations_failure() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::QuotedValue("55".into())],
-            vec![Token::Equal, Token::Value("not a number".into())],
-            vec![Token::In, Token::Value("55".into())],
-            vec![Token::GreaterThan, Token::Equal],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::Comma,
-                Token::Value("2".into()),
-            ],
-            vec![
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::Comma,
-                Token::CloseBrace,
-            ],
-            vec![Token::In, Token::OpenBrace, Token::CloseBrace],
+        let inputs = [
+            r#"vlan.id == """#,
+            r#"vlan.id == "55""#,
+            "vlan.id == not-a-number",
+            "vlan.id in 55",
+            "vlan.id > ==",
+            "vlan.id in {1, 2",
+            "vlan.id in {1, }",
+            "vlan.id in {}",
+            "vlan.id in {,2}",
         ];
 
-        for tokens in cases {
-            info!("Parsing {tokens:?} as value operations - should fail");
-            let res = parse_val_operations().parse(&tokens);
-            assert!(res.has_errors());
+        for input in inputs {
+            info!("Parsing '{input}' as a value operations - should fail");
+            let res = parse(input);
+            assert!(res.is_err());
         }
     }
 
@@ -858,25 +669,30 @@ mod tests {
 
         let regex_matcher = Regex::new("string").unwrap().into();
 
-        let cases = [
-            vec![Token::Contains, Token::Value("ab".into())],
-            vec![Token::Contains, Token::Value("ab:cd:ef".into())],
-            vec![Token::Contains, Token::QuotedValue("string".into())],
-            vec![Token::Contains, Token::QuotedValue(r"\x00string".into())],
-            vec![Token::RegexMatch, Token::QuotedValue(r"string".into())],
+        let inputs = [
+            "payload contains ab",
+            "payload contains ab:cd:ef",
+            "payload contains ab-cd-ef",
+            "payload contains 'string'",
+            r#"payload contains "\x00string""#,
+            r#"payload matches "string""#,
         ];
-        let expected_results = [
-            PayloadOp::contains(vec![0xab]),
-            PayloadOp::contains(vec![0xab, 0xcd, 0xef]),
-            PayloadOp::contains(b"string".to_vec()),
-            PayloadOp::contains(b"\x00string".to_vec()),
-            PayloadOp::regex_match(regex_matcher),
+        let expected = [
+            Clause::Payload(PayloadOp::contains(vec![0xab])),
+            Clause::Payload(PayloadOp::contains(vec![0xab, 0xcd, 0xef])),
+            Clause::Payload(PayloadOp::contains(vec![0xab, 0xcd, 0xef])),
+            Clause::Payload(PayloadOp::contains(b"string".to_vec())),
+            Clause::Payload(PayloadOp::contains(b"\x00string".to_vec())),
+            Clause::Payload(PayloadOp::regex_match(regex_matcher)),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as payload operations - should succeed");
-            let res = parse_payload_operations().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as a payload operations - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -884,16 +700,17 @@ mod tests {
     fn test_parse_payload_operations_failure() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Contains, Token::Value("".into())],
-            vec![Token::RegexMatch, Token::Value("string".into())],
-            vec![Token::RegexMatch, Token::Value(r"\".into())],
+        let inputs = [
+            //"payload contains  ",
+            "payload contains '' ",
+            "payload ~ string",
+            r#"payload ~ "" "#,
         ];
 
-        for tokens in cases {
-            info!("Parsing {tokens:?} as payload operations - should fail");
-            let res = parse_payload_operations().parse(&tokens);
-            assert!(res.has_errors());
+        for input in inputs {
+            info!("Parsing '{input}' as a payload operations - should fail");
+            let res = parse(input);
+            assert!(res.is_err());
         }
     }
 
@@ -901,27 +718,42 @@ mod tests {
     fn test_parse_payload_len_operations_success() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::Value("55".into())],
-            vec![Token::NotEqual, Token::Value("55".into())],
-            vec![Token::GreaterThan, Token::Value("55".into())],
-            vec![Token::GreaterEqual, Token::Value("55".into())],
-            vec![Token::LessThan, Token::Value("55".into())],
-            vec![Token::LessEqual, Token::Value("55".into())],
+        let inputs = [
+            "payload.len == 55",
+            "payload.len eq 55",
+            "payload.len != 55",
+            "payload.len ne 55",
+            "payload.len > 55",
+            "payload.len gt 55",
+            "payload.len >= 55",
+            "payload.len ge 55",
+            "payload.len < 55",
+            "payload.len lt 55",
+            "payload.len <= 55",
+            "payload.len le 55",
         ];
-        let expected_results = [
-            PayloadLenOp::compare(CmpOp::Equal, 55),
-            PayloadLenOp::compare(CmpOp::NotEqual, 55),
-            PayloadLenOp::compare(CmpOp::GreaterThan, 55),
-            PayloadLenOp::compare(CmpOp::GreaterEqual, 55),
-            PayloadLenOp::compare(CmpOp::LessThan, 55),
-            PayloadLenOp::compare(CmpOp::LessEqual, 55),
+        let expected = [
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::NotEqual, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::NotEqual, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterThan, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterThan, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterEqual, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterEqual, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessThan, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessThan, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessEqual, 55)),
+            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessEqual, 55)),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as payload length operations - should succeed");
-            let res = parse_payload_len_operations().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as a payload length operations - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -929,17 +761,18 @@ mod tests {
     fn test_parse_payload_len_operations_failure() {
         init_test_logging();
 
-        let cases = [
-            vec![Token::Equal, Token::QuotedValue("55".into())],
-            vec![Token::Equal, Token::Value("not a number".into())],
-            vec![Token::In, Token::Value("55".into())],
-            vec![Token::GreaterThan, Token::Equal],
+        let inputs = [
+            "payload.len == '55'",
+            "payload.len == not_a_number",
+            "payload.len == s0me",
+            "payload.len in 55",
+            "payload.len < ==",
         ];
 
-        for tokens in cases {
-            info!("Parsing {tokens:?} as payload length operations - should fail");
-            let res = parse_payload_len_operations().parse(&tokens);
-            assert!(res.has_errors());
+        for input in inputs {
+            info!("Parsing '{input}' as a payload length operations - should fail");
+            let res = parse(input);
+            assert!(res.is_err());
         }
     }
 
@@ -947,14 +780,16 @@ mod tests {
     fn test_parse_single_term() {
         init_test_logging();
 
-        let cases = [Token::LitTcp, Token::LitUdp, Token::LitVlan];
-        let expected_results = [Clause::IsTcp, Clause::IsUdp, Clause::IsVlan];
+        let inputs = ["tcp", "udp", "vlan"];
+        let expected = [Clause::IsTcp, Clause::IsUdp, Clause::IsVlan];
 
-        for (token, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {token} as single term clause - should succeed");
-            let tokens = &[token];
-            let res = parse_single_term_clause().parse(tokens).unwrap();
-            assert_eq!(res, expected);
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as single term clause - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
@@ -963,158 +798,41 @@ mod tests {
         init_test_logging();
 
         let mac_addr = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
-        let mac_val = "ab-cd-ef-01-23-45".to_string();
         let regex_matcher: RegexMatcher = Regex::new("string").unwrap().into();
         let ip: IpNet = "192.168.1.1/32".parse().unwrap();
 
-        let cases = [
-            vec![Token::LitVlanId, Token::Equal, Token::Value("1".into())],
-            vec![
-                Token::LitVlanId,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::CloseBrace,
-            ],
-            vec![Token::LitPort, Token::Equal, Token::Value("1".into())],
-            vec![
-                Token::LitPort,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::CloseBrace,
-            ],
-            vec![Token::LitPortDst, Token::Equal, Token::Value("1".into())],
-            vec![
-                Token::LitPortDst,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::CloseBrace,
-            ],
-            vec![Token::LitPortSrc, Token::Equal, Token::Value("1".into())],
-            vec![
-                Token::LitPortSrc,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("1".into()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitEthAddr,
-                Token::Equal,
-                Token::Value(mac_val.clone()),
-            ],
-            vec![
-                Token::LitEthAddr,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value(mac_val.clone()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitEthAddr,
-                Token::Contains,
-                Token::Value("00:11".into()),
-            ],
-            vec![
-                Token::LitEthAddr,
-                Token::RegexMatch,
-                Token::QuotedValue("string".into()),
-            ],
-            vec![
-                Token::LitEthDst,
-                Token::Equal,
-                Token::Value(mac_val.clone()),
-            ],
-            vec![
-                Token::LitEthDst,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value(mac_val.clone()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitEthDst,
-                Token::Contains,
-                Token::Value("00:11".into()),
-            ],
-            vec![
-                Token::LitEthDst,
-                Token::RegexMatch,
-                Token::QuotedValue("string".into()),
-            ],
-            vec![
-                Token::LitEthSrc,
-                Token::Equal,
-                Token::Value(mac_val.clone()),
-            ],
-            vec![
-                Token::LitEthSrc,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value(mac_val),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitEthSrc,
-                Token::Contains,
-                Token::Value("00:11".into()),
-            ],
-            vec![
-                Token::LitEthSrc,
-                Token::RegexMatch,
-                Token::QuotedValue("string".into()),
-            ],
-            vec![
-                Token::LitIpAddr,
-                Token::Equal,
-                Token::Value("192.168.1.1".into()),
-            ],
-            vec![
-                Token::LitIpAddr,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitIpDst,
-                Token::Equal,
-                Token::Value("192.168.1.1".into()),
-            ],
-            vec![
-                Token::LitIpDst,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitIpSrc,
-                Token::Equal,
-                Token::Value("192.168.1.1".into()),
-            ],
-            vec![
-                Token::LitIpSrc,
-                Token::In,
-                Token::OpenBrace,
-                Token::Value("192.168.1.1".into()),
-                Token::CloseBrace,
-            ],
-            vec![
-                Token::LitPayload,
-                Token::Contains,
-                Token::Value("00:11".into()),
-            ],
-            vec![
-                Token::LitPayload,
-                Token::RegexMatch,
-                Token::QuotedValue("string".into()),
-            ],
-            vec![Token::LitPayloadLen, Token::Equal, Token::Value("1".into())],
+        let inputs = [
+            "vlan.id == 1",
+            "vlan.id in{1}",
+            "port eq 1",
+            "port in { 1 }",
+            "dstport == 1",
+            "dstport in { 1 }",
+            "srcport == 1",
+            "srcport in { 1 }",
+            "eth.addr == ab-cd-ef-01-23-45",
+            "eth.addr in {ab-cd-ef-01-23-45}",
+            "eth.addr contains 00:11",
+            "eth.addr matches 'string'",
+            "eth.dst == ab-cd-ef-01-23-45",
+            "eth.dst in {ab-cd-ef-01-23-45}",
+            "eth.dst contains 00:11",
+            "eth.dst matches 'string'",
+            "eth.src == ab-cd-ef-01-23-45",
+            "eth.src in {ab-cd-ef-01-23-45}",
+            "eth.src contains 00:11",
+            "eth.src matches 'string'",
+            "ip.addr == 192.168.1.1",
+            "ip.addr in { 192.168.1.1 }",
+            "ip.dst == 192.168.1.1",
+            "ip.dst in { 192.168.1.1 }",
+            "ip.src == 192.168.1.1",
+            "ip.src in { 192.168.1.1 }",
+            "payload contains 00:11",
+            "payload matches 'string'",
+            "payload.len eq 1",
         ];
-        let expected_results = [
+        let expected = [
             Clause::VlanId(ValOp::compare(CmpOp::Equal, 1)),
             Clause::VlanId(ValOp::match_any(vec![1])),
             Clause::Port(ValOp::compare(CmpOp::Equal, 1)),
@@ -1146,41 +864,21 @@ mod tests {
             Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 1)),
         ];
 
-        for (tokens, expected) in cases.into_iter().zip(expected_results) {
-            info!("Parsing {tokens:?} as multiple term clause - should succeed");
-            let res = parse_multiple_terms_clause().parse(&tokens).unwrap();
-            assert_eq!(res, expected);
-            let res = expression_parser().parse(&tokens).unwrap().0;
-            assert_eq!(res, expected.into());
+        // Validate we have an expected result for every input
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as multiple term clause - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
         }
     }
 
     #[test]
     fn test_parse_complex_statement_01() {
-        use Token::*;
-
         init_test_logging();
 
-        let tokens = [
-            LitVlan,
-            And,
-            OpenParen,
-            LitVlanId,
-            In,
-            OpenBrace,
-            Value("1".into()),
-            Comma,
-            Value("2".into()),
-            CloseBrace,
-            Or,
-            LitIpAddr,
-            Equal,
-            Value("10.1.0.0/16".into()),
-            CloseParen,
-            And,
-            Not,
-            LitUdp,
-        ];
+        let input = "vlan and (vlan.id in {1, 2} or ip.addr == 10.1.0.0/16) and not udp";
         let expected = Expression::And(vec![
             Clause::IsVlan.into(),
             Expression::Or(vec![
@@ -1190,41 +888,19 @@ mod tests {
             Expression::not(Clause::IsUdp),
         ]);
 
-        info!("Validating parse of {tokens:?} as an expression {expected:?}");
-        let expr = expression_parser().parse(&tokens).unwrap().0;
-        assert_eq!(expr, expected);
+        info!("Validating parse of {input} as an expression {expected:?}");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
     }
 
     #[test]
     fn test_parse_complex_statement_02() {
-        use Token::*;
-
         init_test_logging();
+
         let ip: IpNet = "10.1.0.0/16".parse().unwrap();
         let mac1 = MacAddr::from([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
         let mac2 = MacAddr::from([0x55, 0x44, 0x33, 0x22, 0x11, 0x00]);
-        let tokens = [
-            OpenParen,
-            LitVlan,
-            Or,
-            OpenParen,
-            LitEthAddr,
-            In,
-            OpenBrace,
-            Value("00:11:22:33:44:55".into()),
-            Comma,
-            Value("55:44:33:22:11:00".into()),
-            CloseBrace,
-            And,
-            LitIpAddr,
-            Equal,
-            Value("10.1.0.0/16".into()),
-            And,
-            Not,
-            LitUdp,
-            CloseParen,
-            CloseParen,
-        ];
+        let input = "(vlan or (eth.addr in {00:11:22:33:44:55, 55:44:33:22:11:00} and ip.addr == 10.1.0.0/16 and not udp))";
         let expected = Expression::Or(vec![
             Clause::IsVlan.into(),
             Expression::And(vec![
@@ -1234,70 +910,44 @@ mod tests {
             ]),
         ]);
 
-        info!("Validating parse of {tokens:?} as an expression {expected:?}");
-        let expr = expression_parser().parse(&tokens).unwrap().0;
-        assert_eq!(expr, expected);
+        info!("Validating parse of {input} as an expression {expected:?}");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
     }
 
     #[test]
     fn test_parse_complex_statement_03() {
-        use Token::*;
-
         init_test_logging();
+
         let ip: IpNet = "10.1.0.0/16".parse().unwrap();
         let regex: RegexMatcher = Regex::new("something").unwrap().into();
-        let tokens = [
-            Not,
-            OpenParen,
-            LitEthAddr,
-            RegexMatch,
-            QuotedValue("something".into()),
-            And,
-            LitIpAddr,
-            Equal,
-            Value("10.1.0.0/16".into()),
-            CloseParen,
-        ];
+        let input = "not (eth.addr ~ 'something' and ip.addr == 10.1.0.0/16)";
         let expected = Expression::not(Expression::And(vec![
             Clause::EthAddr(EthOp::regex_match(regex)).into(),
             Clause::IpAddr(IpOp::compare(CmpOp::Equal, ip)).into(),
         ]));
 
-        info!("Validating parse of {tokens:?} as an expression {expected:?}");
-        let expr = expression_parser().parse(&tokens).unwrap().0;
-        assert_eq!(expr, expected);
+        info!("Validating parse of {input} as an expression {expected:?}");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
     }
 
     #[test]
     fn test_parse_complex_statement_04() {
-        use Token::*;
-
         init_test_logging();
+
         let regex1: RegexMatcher = Regex::new("something").unwrap().into();
         let regex2: RegexMatcher = Regex::new("else").unwrap().into();
         let regex3: RegexMatcher = Regex::new("last").unwrap().into();
-        let tokens = [
-            LitPayload,
-            RegexMatch,
-            QuotedValue("something".into()),
-            And,
-            Not,
-            LitPayload,
-            RegexMatch,
-            QuotedValue("else".into()),
-            And,
-            LitPayload,
-            RegexMatch,
-            QuotedValue("last".into()),
-        ];
+        let input = "payload matches 'something' and not payload ~ 'else' and payload ~ 'last'";
         let expected = Expression::And(vec![
             Clause::Payload(PayloadOp::regex_match(regex1)).into(),
             Expression::not(Clause::Payload(PayloadOp::regex_match(regex2))),
             Clause::Payload(PayloadOp::regex_match(regex3)).into(),
         ]);
 
-        info!("Validating parse of {tokens:?} as an expression {expected:?}");
-        let expr = expression_parser().parse(&tokens).unwrap().0;
-        assert_eq!(expr, expected);
+        info!("Validating parse of {input} as an expression {expected:?}");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
     }
 }

@@ -15,7 +15,6 @@ pub const MAC_ADDR_LEN: usize = 6;
     Copy,
     PartialEq,
     Eq,
-    Hash,
     PartialOrd,
     Ord,
     derive_more::Constructor,
@@ -44,7 +43,7 @@ impl std::fmt::Debug for MacAddr {
     }
 }
 
-impl TryFrom<&str> for MacAddr {
+impl TryFrom<&[u8]> for MacAddr {
     type Error = ();
 
     /// Parse MAC Address from a string.
@@ -68,11 +67,11 @@ impl TryFrom<&str> for MacAddr {
     ///    https://www.ieee802.org/1/files/public/docs2020/yangsters-smansfield-mac-address-format-0420-v01.pdf).
     #[rustfmt::skip]
     #[inline]
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
         const COLON: u8 = b':';
         const DASH: u8 = b'-';
         const DOT: u8 = b'.';
-        match value.as_bytes() {
+        match value {
               &[a, b, COLON, c, d, COLON, e, f, COLON, g, h, COLON, i, j, COLON, k, l]
             | &[a, b, DASH, c, d, DASH, e, f, DASH, g, h, DASH, i, j, DASH, k, l]
             | &[a, b, c, DOT, d, e, f, DOT, g, h, i, DOT, j, k, l]
@@ -151,10 +150,10 @@ mod tests {
         let expected12 = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
         let expected34 = MacAddr::from([0x68, 0x79, 0xa1, 0xb2, 0xc3, 0xfd]);
 
-        assert_eq!(MacAddr::try_from(buf1), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf2.as_str()), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf3), Ok(expected34));
-        assert_eq!(MacAddr::try_from(buf4.as_str()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf1.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf2.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf3.as_bytes()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf4.as_bytes()), Ok(expected34));
     }
 
     #[test]
@@ -167,10 +166,10 @@ mod tests {
         let expected12 = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
         let expected34 = MacAddr::from([0x68, 0x79, 0xa1, 0xb2, 0xc3, 0xfd]);
 
-        assert_eq!(MacAddr::try_from(buf1), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf2.as_str()), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf3), Ok(expected34));
-        assert_eq!(MacAddr::try_from(buf4.as_str()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf1.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf2.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf3.as_bytes()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf4.as_bytes()), Ok(expected34));
     }
 
     #[test]
@@ -183,10 +182,10 @@ mod tests {
         let expected12 = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
         let expected34 = MacAddr::from([0x68, 0x79, 0xa1, 0xb2, 0xc3, 0xfd]);
 
-        assert_eq!(MacAddr::try_from(buf1), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf2.as_str()), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf3), Ok(expected34));
-        assert_eq!(MacAddr::try_from(buf4.as_str()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf1.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf2.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf3.as_bytes()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf4.as_bytes()), Ok(expected34));
     }
 
     #[test]
@@ -199,10 +198,10 @@ mod tests {
         let expected12 = MacAddr::from([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
         let expected34 = MacAddr::from([0x68, 0x79, 0xa1, 0xb2, 0xc3, 0xfd]);
 
-        assert_eq!(MacAddr::try_from(buf1), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf2.as_str()), Ok(expected12));
-        assert_eq!(MacAddr::try_from(buf3), Ok(expected34));
-        assert_eq!(MacAddr::try_from(buf4.as_str()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf1.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf2.as_bytes()), Ok(expected12));
+        assert_eq!(MacAddr::try_from(buf3.as_bytes()), Ok(expected34));
+        assert_eq!(MacAddr::try_from(buf4.as_bytes()), Ok(expected34));
     }
 
     #[test]
@@ -217,14 +216,14 @@ mod tests {
         let buf8 = buf7.to_ascii_uppercase();
 
         let expected = MacAddr::new([0xab, 0xcd, 0xef, 0x01, 0x23, 0x45]);
-        let m1 = MacAddr::try_from(buf1).unwrap();
-        let m2 = MacAddr::try_from(buf2.as_str()).unwrap();
-        let m3 = MacAddr::try_from(buf3).unwrap();
-        let m4 = MacAddr::try_from(buf4.as_str()).unwrap();
-        let m5 = MacAddr::try_from(buf5).unwrap();
-        let m6 = MacAddr::try_from(buf6.as_str()).unwrap();
-        let m7 = MacAddr::try_from(buf7).unwrap();
-        let m8 = MacAddr::try_from(buf8.as_str()).unwrap();
+        let m1 = MacAddr::try_from(buf1.as_bytes()).unwrap();
+        let m2 = MacAddr::try_from(buf2.as_bytes()).unwrap();
+        let m3 = MacAddr::try_from(buf3.as_bytes()).unwrap();
+        let m4 = MacAddr::try_from(buf4.as_bytes()).unwrap();
+        let m5 = MacAddr::try_from(buf5.as_bytes()).unwrap();
+        let m6 = MacAddr::try_from(buf6.as_bytes()).unwrap();
+        let m7 = MacAddr::try_from(buf7.as_bytes()).unwrap();
+        let m8 = MacAddr::try_from(buf8.as_bytes()).unwrap();
 
         assert!(m1 == expected);
         assert!(m2 == expected);
@@ -243,10 +242,10 @@ mod tests {
         let buf2 = "ab:cd:ef:01:23:4";
         let buf3 = buf1.to_ascii_uppercase();
         let buf4 = buf2.to_ascii_uppercase();
-        assert!(MacAddr::try_from(buf0).is_err());
-        assert!(MacAddr::try_from(buf1).is_err());
-        assert!(MacAddr::try_from(buf2).is_err());
-        assert!(MacAddr::try_from(buf3.as_str()).is_err());
-        assert!(MacAddr::try_from(buf4.as_str()).is_err());
+        assert!(MacAddr::try_from(buf0.as_bytes()).is_err());
+        assert!(MacAddr::try_from(buf1.as_bytes()).is_err());
+        assert!(MacAddr::try_from(buf2.as_bytes()).is_err());
+        assert!(MacAddr::try_from(buf3.as_bytes()).is_err());
+        assert!(MacAddr::try_from(buf4.as_bytes()).is_err());
     }
 }

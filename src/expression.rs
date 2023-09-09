@@ -2,12 +2,11 @@
 //!
 //! This is the final form that a filter expression is converted into.
 //! It is what gets later executed against every packet.
+use crate::mac_addr::MacAddr;
 use ipnet::IpNet;
 use memchr::memmem;
 use regex::bytes::Regex;
 use std::net::IpAddr;
-
-use crate::mac_addr::MacAddr;
 
 /// A a wrapper around a bytes regex matcher to handle the issue that regex does not implement
 /// PartialEq, Eq, PartialOrd, Ord

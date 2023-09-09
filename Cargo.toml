@@ -1,6 +1,6 @@
 [package]
 name = "min_shark"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Dov Reshef <reshef.dov@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ exclude = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-chumsky = { version = "1.0.0-alpha.4", features = ["label"] }
+bstr = "1.6"
 regex = "1.9"
 derive_more = "0.99"
 ipnet = "2.8"
