@@ -327,7 +327,7 @@ impl<'a> Lexer<'a> {
                     tokens.push(st);
                     self.consume(1);
                 }
-                (delimiter @ b'"' | delimiter @ b'\'', _) => {
+                (delimiter @ (b'"' | b'\''), _) => {
                     let token = self.lex_quoted_string(delimiter);
                     tokens.push(token);
                 }

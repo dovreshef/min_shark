@@ -43,12 +43,12 @@ fn parse_ascii_byte(n1: u8, n2: u8) -> Result<u8, &'static str> {
         // A-F
         else if n > 64 && n < 71 {
             // The letter "A" (dec 10) in the ASCII table at position 65
-            nibble = n - 55
+            nibble = n - 55;
         }
         // a-f
         else if n > 96 && n < 103 {
             // The letter "a" (dec 10) in the ASCII table at position 97
-            nibble = n - 87
+            nibble = n - 87;
         } else {
             return Err("not a valid ascii hex character");
         }
@@ -140,7 +140,7 @@ pub fn parse_escaped_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
                     state = State::HexFirst;
                 }
                 c => {
-                    bytes.extend(format!(r"\{}", c).into_bytes());
+                    bytes.extend(format!(r"\{c}").into_bytes());
                     state = State::Literal;
                 }
             },
@@ -149,7 +149,7 @@ pub fn parse_escaped_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
                     state = State::HexSecond(c);
                 }
                 c => {
-                    bytes.extend(format!(r"\x{}", c).into_bytes());
+                    bytes.extend(format!(r"\x{c}").into_bytes());
                     state = State::Literal;
                 }
             },
@@ -160,7 +160,7 @@ pub fn parse_escaped_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
                     state = State::Literal;
                 }
                 c => {
-                    let original = format!(r"\x{}{}", first, c);
+                    let original = format!(r"\x{first}{c}");
                     bytes.extend(original.into_bytes());
                     state = State::Literal;
                 }
@@ -178,7 +178,7 @@ pub fn parse_escaped_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
     match state {
         State::Escape => bytes.push(b'\\'),
         State::HexFirst => bytes.extend(b"\\x"),
-        State::HexSecond(c) => bytes.extend(format!("\\x{}", c).into_bytes()),
+        State::HexSecond(c) => bytes.extend(format!("\\x{c}").into_bytes()),
         State::Literal => {}
     }
     Ok(bytes)

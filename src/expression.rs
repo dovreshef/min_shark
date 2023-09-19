@@ -372,7 +372,7 @@ impl std::fmt::Display for Expression {
             Expression::And(list) => {
                 let list = list
                     .iter()
-                    .map(|e| e.to_string())
+                    .map(ToString::to_string)
                     .collect::<Vec<String>>()
                     .join(" and ");
                 write!(f, "({list})")
@@ -380,7 +380,7 @@ impl std::fmt::Display for Expression {
             Expression::Or(list) => {
                 let list = list
                     .iter()
-                    .map(|e| e.to_string())
+                    .map(ToString::to_string)
                     .collect::<Vec<String>>()
                     .join(" or ");
                 write!(f, "({list})")
