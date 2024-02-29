@@ -42,6 +42,7 @@ space separated types between curly braces.
 
 Example:
 * 'srcport in {80, 443}'
+* 'srcport not in {80, 443}'
 * 'eth.dst in {00.11.22.44:55, 55:44:33:22:11:00}'
 
 ### ip
@@ -104,12 +105,14 @@ Example:
 * Comparison: '==', '!=', '>', '>=', '<', '<='
 * In (bytes): 'contains'
 * In (list): 'in'
+* Not in (list): 'not in'
 * Regex: 'matches', '~'
 
 Examples:
 * 'ip.src == 192.168.1.7 || ip.dst == 1.2.3.4 && (srcport == 9 || dstport == 9)'
 * 'eth.src == 3f:43:9a:2c:00:00 or eth.dst contains 2c:9a:bb'
 * 'srcport in {80, 443}'
+* 'srcport not in {80, 443}'
 * 'payload contains "something"'
 * 'payload.len > 50'
 * 'payload ~ "(ASCII|\x22\x12)"'

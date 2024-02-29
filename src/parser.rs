@@ -173,6 +173,19 @@ impl<'a> Parser<'a> {
                 EthOp::compare(cmp_op, mac)
             }
             _ => match self.current.kind {
+                TokenKind::Not => {
+                    self.advance();
+                    if self.current.kind != TokenKind::In {
+                        return Err(ErrorKind::unexpected(
+                            Expected::label("'not' can only be followed by 'in' in this position"),
+                            self.current,
+                        ));
+                    }
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_mac_addr, "list of mac-address")?;
+                    EthOp::match_none(values)
+                }
                 TokenKind::In => {
                     self.advance();
                     let values =
@@ -220,6 +233,19 @@ impl<'a> Parser<'a> {
                 IpOp::compare(cmp_op, ip)
             }
             _ => match self.current.kind {
+                TokenKind::Not => {
+                    self.advance();
+                    if self.current.kind != TokenKind::In {
+                        return Err(ErrorKind::unexpected(
+                            Expected::label("'not' can only be followed by 'in' in this position"),
+                            self.current,
+                        ));
+                    }
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_ip_net, "a list of ip-addresses")?;
+                    IpOp::match_none(values)
+                }
                 TokenKind::In => {
                     self.advance();
                     let values =
@@ -244,6 +270,19 @@ impl<'a> Parser<'a> {
                 ValOp::compare(cmp_op, num)
             }
             _ => match self.current.kind {
+                TokenKind::Not => {
+                    self.advance();
+                    if self.current.kind != TokenKind::In {
+                        return Err(ErrorKind::unexpected(
+                            Expected::label("'not' can only be followed by 'in' in this position"),
+                            self.current,
+                        ));
+                    }
+                    self.advance();
+                    let values =
+                        self.parse_list(TokenKind::Value, &parse_u16, "list of numbers")?;
+                    ValOp::match_none(values)
+                }
                 TokenKind::In => {
                     self.advance();
                     let values =
@@ -806,28 +845,37 @@ mod tests {
             "vlan.id in{1}",
             "port eq 1",
             "port in { 1 }",
+            "port not in { 1 }",
             "dstport == 1",
             "dstport in { 1 }",
+            "dstport not in { 1 }",
             "srcport == 1",
             "srcport in { 1 }",
+            "srcport not in { 1 }",
             "eth.addr == ab-cd-ef-01-23-45",
             "eth.addr in {ab-cd-ef-01-23-45}",
+            "eth.addr not in {ab-cd-ef-01-23-45}",
             "eth.addr contains 00:11",
             "eth.addr matches 'string'",
             "eth.dst == ab-cd-ef-01-23-45",
             "eth.dst in {ab-cd-ef-01-23-45}",
+            "eth.dst not in {ab-cd-ef-01-23-45}",
             "eth.dst contains 00:11",
             "eth.dst matches 'string'",
             "eth.src == ab-cd-ef-01-23-45",
             "eth.src in {ab-cd-ef-01-23-45}",
+            "eth.src not in {ab-cd-ef-01-23-45}",
             "eth.src contains 00:11",
             "eth.src matches 'string'",
             "ip.addr == 192.168.1.1",
             "ip.addr in { 192.168.1.1 }",
+            "ip.addr not in { 192.168.1.1 }",
             "ip.dst == 192.168.1.1",
             "ip.dst in { 192.168.1.1 }",
+            "ip.dst not in { 192.168.1.1 }",
             "ip.src == 192.168.1.1",
             "ip.src in { 192.168.1.1 }",
+            "ip.src not in { 192.168.1.1 }",
             "payload contains 00:11",
             "payload matches 'string'",
             "payload.len eq 1",
@@ -837,28 +885,37 @@ mod tests {
             Clause::VlanId(ValOp::match_any(vec![1])),
             Clause::Port(ValOp::compare(CmpOp::Equal, 1)),
             Clause::Port(ValOp::match_any(vec![1])),
+            Clause::Port(ValOp::match_none(vec![1])),
             Clause::PortDst(ValOp::compare(CmpOp::Equal, 1)),
             Clause::PortDst(ValOp::match_any(vec![1])),
+            Clause::PortDst(ValOp::match_none(vec![1])),
             Clause::PortSrc(ValOp::compare(CmpOp::Equal, 1)),
             Clause::PortSrc(ValOp::match_any(vec![1])),
+            Clause::PortSrc(ValOp::match_none(vec![1])),
             Clause::EthAddr(EthOp::compare(CmpOp::Equal, mac_addr)),
             Clause::EthAddr(EthOp::match_any(vec![mac_addr])),
+            Clause::EthAddr(EthOp::match_none(vec![mac_addr])),
             Clause::EthAddr(EthOp::contains(vec![0x00, 0x11])),
             Clause::EthAddr(EthOp::regex_match(regex_matcher.clone())),
             Clause::EthDst(EthOp::compare(CmpOp::Equal, mac_addr)),
             Clause::EthDst(EthOp::match_any(vec![mac_addr])),
+            Clause::EthDst(EthOp::match_none(vec![mac_addr])),
             Clause::EthDst(EthOp::contains(vec![0x00, 0x11])),
             Clause::EthDst(EthOp::regex_match(regex_matcher.clone())),
             Clause::EthSrc(EthOp::compare(CmpOp::Equal, mac_addr)),
             Clause::EthSrc(EthOp::match_any(vec![mac_addr])),
+            Clause::EthSrc(EthOp::match_none(vec![mac_addr])),
             Clause::EthSrc(EthOp::contains(vec![0x00, 0x11])),
             Clause::EthSrc(EthOp::regex_match(regex_matcher.clone())),
             Clause::IpAddr(IpOp::compare(CmpOp::Equal, ip)),
             Clause::IpAddr(IpOp::match_any(vec![ip])),
+            Clause::IpAddr(IpOp::match_none(vec![ip])),
             Clause::IpDst(IpOp::compare(CmpOp::Equal, ip)),
             Clause::IpDst(IpOp::match_any(vec![ip])),
+            Clause::IpDst(IpOp::match_none(vec![ip])),
             Clause::IpSrc(IpOp::compare(CmpOp::Equal, ip)),
             Clause::IpSrc(IpOp::match_any(vec![ip])),
+            Clause::IpSrc(IpOp::match_none(vec![ip])),
             Clause::Payload(PayloadOp::contains(vec![0x00, 0x11])),
             Clause::Payload(PayloadOp::regex_match(regex_matcher)),
             Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 1)),
@@ -945,6 +1002,20 @@ mod tests {
             Expression::not(Clause::Payload(PayloadOp::regex_match(regex2))),
             Clause::Payload(PayloadOp::regex_match(regex3)).into(),
         ]);
+
+        info!("Validating parse of {input} as an expression {expected:?}");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
+    }
+
+    #[test]
+    fn test_parse_complex_statement_05() {
+        init_test_logging();
+
+        let ip1: IpNet = "192.168.1.1/24".parse().unwrap();
+        let ip2: IpNet = "10.1.1.0/32".parse().unwrap();
+        let input = "not ip.dst not in {192.168.1.1/24, 10.1.1.0}";
+        let expected = Expression::not(Clause::IpDst(IpOp::MatchNone(vec![ip1, ip2])));
 
         info!("Validating parse of {input} as an expression {expected:?}");
         let expression = parse(input).unwrap();

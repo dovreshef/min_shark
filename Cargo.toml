@@ -1,6 +1,6 @@
 [package]
 name = "min_shark"
-version = "0.2.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Dov Reshef <reshef.dov@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -17,11 +17,11 @@ exclude = [
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bstr = "1.6"
-regex = "1.9"
+bstr = "1.9"
+regex = "1.10"
 derive_more = "0.99"
-ipnet = "2.8"
-memchr = "2.6"
+ipnet = "2.9"
+memchr = "2.7"
 
 [dev-dependencies]
 tracing = "0.1"

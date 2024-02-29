@@ -53,6 +53,8 @@ pub enum EthOp {
     Compare { op: CmpOp, val: MacAddr },
     #[display(fmt = "in {_0:?}")]
     MatchAny(Vec<MacAddr>),
+    #[display(fmt = "not in {_0:?}")]
+    MatchNone(Vec<MacAddr>),
     #[display(fmt = "contains {_0:?}")]
     Contains(Vec<u8>),
     #[display(fmt = "matches {_0}")]
@@ -68,6 +70,11 @@ impl EthOp {
     #[inline]
     pub(crate) fn match_any(val: Vec<MacAddr>) -> Self {
         Self::MatchAny(val)
+    }
+
+    #[inline]
+    pub(crate) fn match_none(val: Vec<MacAddr>) -> Self {
+        Self::MatchNone(val)
     }
 
     #[inline]
@@ -91,6 +98,7 @@ impl EthOp {
                 CmpOp::GreaterEqual => addr >= *val,
             },
             EthOp::MatchAny(list) => list.contains(&addr),
+            EthOp::MatchNone(list) => !list.contains(&addr),
             EthOp::Contains(data) => memmem::find_iter(addr.as_slice(), data).next().is_some(),
             EthOp::RegexMatch(re) => re.is_match(addr.as_slice()),
         }
@@ -104,6 +112,8 @@ pub enum IpOp {
     Compare { op: CmpOp, val: IpNet },
     #[display(fmt = "in {_0:?}")]
     MatchAny(Vec<IpNet>),
+    #[display(fmt = "not in {_0:?}")]
+    MatchNone(Vec<IpNet>),
 }
 
 impl IpOp {
@@ -117,6 +127,11 @@ impl IpOp {
         Self::MatchAny(val)
     }
 
+    #[inline]
+    pub(crate) fn match_none(val: Vec<IpNet>) -> Self {
+        Self::MatchNone(val)
+    }
+
     fn is_match(&self, addr: IpNet) -> bool {
         match self {
             IpOp::Compare { op, val } => match op {
@@ -128,6 +143,7 @@ impl IpOp {
                 CmpOp::GreaterEqual => addr >= *val,
             },
             IpOp::MatchAny(list) => list.iter().any(|net| net.contains(&addr)),
+            IpOp::MatchNone(list) => !list.iter().any(|net| net.contains(&addr)),
         }
     }
 }
@@ -139,6 +155,8 @@ pub enum ValOp {
     Compare { op: CmpOp, val: u16 },
     #[display(fmt = "in {_0:?}")]
     MatchAny(Vec<u16>),
+    #[display(fmt = "not in {_0:?}")]
+    MatchNone(Vec<u16>),
 }
 
 impl ValOp {
@@ -152,6 +170,11 @@ impl ValOp {
         Self::MatchAny(val)
     }
 
+    #[inline]
+    pub(crate) fn match_none(val: Vec<u16>) -> Self {
+        Self::MatchNone(val)
+    }
+
     fn is_match(&self, x: u16) -> bool {
         match self {
             ValOp::Compare { op, val } => match op {
@@ -163,6 +186,7 @@ impl ValOp {
                 CmpOp::GreaterEqual => x >= *val,
             },
             ValOp::MatchAny(list) => list.contains(&x),
+            ValOp::MatchNone(list) => !list.contains(&x),
         }
     }
 }
@@ -817,8 +841,10 @@ mod tests {
             Clause::PortDst(ValOp::compare(CmpOp::Equal, dstport)),
             Clause::Port(ValOp::match_any(vec![srcport])),
             Clause::Port(ValOp::match_any(vec![dstport])),
+            Clause::Port(ValOp::match_none(vec![1, 2, 3])),
             Clause::PortSrc(ValOp::match_any(vec![srcport])),
             Clause::PortDst(ValOp::match_any(vec![dstport])),
+            Clause::PortDst(ValOp::match_none(vec![1, 2, 3])),
         ];
         for clause in clauses.into_iter() {
             let expression = Expression::from(clause);
@@ -864,7 +890,9 @@ mod tests {
             Clause::EthAddr(EthOp::match_any(vec![src_mac_addr])),
             Clause::EthAddr(EthOp::match_any(vec![dst_mac_addr])),
             Clause::EthSrc(EthOp::match_any(vec![src_mac_addr])),
+            Clause::EthSrc(EthOp::match_none(vec![dst_mac_addr])),
             Clause::EthDst(EthOp::match_any(vec![dst_mac_addr])),
+            Clause::EthDst(EthOp::match_none(vec![src_mac_addr])),
             Clause::EthAddr(EthOp::contains(src_match.clone())),
             Clause::EthAddr(EthOp::contains(dst_match.clone())),
             Clause::EthDst(EthOp::contains(dst_match)),
@@ -903,6 +931,8 @@ mod tests {
             Clause::IpAddr(IpOp::match_any(vec![dst_net])),
             Clause::IpSrc(IpOp::match_any(vec![src_net])),
             Clause::IpDst(IpOp::match_any(vec![dst_net])),
+            Clause::IpSrc(IpOp::match_none(vec![dst_net])),
+            Clause::IpDst(IpOp::match_none(vec![src_net])),
         ];
         for clause in clauses.into_iter() {
             let expression = Expression::from(clause);
