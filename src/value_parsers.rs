@@ -9,7 +9,7 @@ use regex::bytes::Regex;
 use std::net::IpAddr;
 
 /// Parse a given string as a u16
-pub fn parse_u16(val: &BStr) -> Result<u16, &'static str> {
+pub(crate) fn parse_u32(val: &BStr) -> Result<u32, &'static str> {
     let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
     val.parse().map_err(|_| "not a valid number")
 }
@@ -203,7 +203,7 @@ mod tests {
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
-        parse_u16,
+        parse_u32,
     };
     use crate::{
         mac_addr::MacAddr,
@@ -213,16 +213,16 @@ mod tests {
     use tracing::info;
 
     #[test]
-    fn test_parse_u16() {
+    fn test_parse_u32() {
         init_test_logging();
 
-        for val in [u16::MIN, u16::MAX] {
+        for val in [u32::MIN, u32::MAX] {
             info!("Parsing \"{val}\" as u16 - should succeed");
-            let num = parse_u16(val.to_string().as_str().into()).unwrap();
+            let num = parse_u32(val.to_string().as_str().into()).unwrap();
             assert_eq!(val, num);
         }
 
-        let num = (u16::MAX as u32 + 1).to_string();
+        let num = (u32::MAX as u64 + 1).to_string();
         for val in [
             "25d".as_bytes(),
             "-1".as_bytes(),
@@ -232,7 +232,7 @@ mod tests {
         ] {
             let val = val.into();
             info!("Parsing \"{val}\" as u16 - should fail");
-            let res = parse_u16(val);
+            let res = parse_u32(val);
             assert!(res.is_err());
         }
     }

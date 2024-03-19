@@ -23,7 +23,7 @@ use crate::{
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
-        parse_u16,
+        parse_u32,
     },
     Expression,
 };
@@ -266,7 +266,7 @@ impl<'a> Parser<'a> {
     fn parse_value_operations(&mut self) -> Result<ValOp, ErrorKind> {
         let val_op = match self.parse_comparison_operator() {
             Ok(cmp_op) => {
-                let num = self.parse_value(TokenKind::Value, &parse_u16, "number")?;
+                let num = self.parse_value(TokenKind::Value, &parse_u32, "number")?;
                 ValOp::compare(cmp_op, num)
             }
             _ => match self.current.kind {
@@ -280,13 +280,13 @@ impl<'a> Parser<'a> {
                     }
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u16, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
                     ValOp::match_none(values)
                 }
                 TokenKind::In => {
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u16, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
                     ValOp::match_any(values)
                 }
                 _ => {
@@ -335,7 +335,7 @@ impl<'a> Parser<'a> {
     fn parse_payload_len_operations(&mut self) -> Result<PayloadLenOp, ErrorKind> {
         let val_op = match self.parse_comparison_operator() {
             Ok(cmp_op) => {
-                let num = self.parse_value(TokenKind::Value, &parse_u16, "number")?;
+                let num = self.parse_value(TokenKind::Value, &parse_u32, "number")?;
                 PayloadLenOp::compare(cmp_op, num)
             }
             _ => {
