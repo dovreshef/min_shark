@@ -152,30 +152,30 @@ impl IpOp {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ValOp {
     #[display(fmt = "{op} {val}")]
-    Compare { op: CmpOp, val: u16 },
+    Compare { op: CmpOp, val: u32 },
     #[display(fmt = "in {_0:?}")]
-    MatchAny(Vec<u16>),
+    MatchAny(Vec<u32>),
     #[display(fmt = "not in {_0:?}")]
-    MatchNone(Vec<u16>),
+    MatchNone(Vec<u32>),
 }
 
 impl ValOp {
     #[inline]
-    pub(crate) fn compare(op: CmpOp, val: u16) -> Self {
+    pub(crate) fn compare(op: CmpOp, val: u32) -> Self {
         Self::Compare { op, val }
     }
 
     #[inline]
-    pub(crate) fn match_any(val: Vec<u16>) -> Self {
+    pub(crate) fn match_any(val: Vec<u32>) -> Self {
         Self::MatchAny(val)
     }
 
     #[inline]
-    pub(crate) fn match_none(val: Vec<u16>) -> Self {
+    pub(crate) fn match_none(val: Vec<u32>) -> Self {
         Self::MatchNone(val)
     }
 
-    fn is_match(&self, x: u16) -> bool {
+    fn is_match(&self, x: u32) -> bool {
         match self {
             ValOp::Compare { op, val } => match op {
                 CmpOp::Equal => x == *val,
@@ -223,16 +223,16 @@ impl PayloadOp {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum PayloadLenOp {
     #[display(fmt = "{op} {val}")]
-    Compare { op: CmpOp, val: u16 },
+    Compare { op: CmpOp, val: u32 },
 }
 
 impl PayloadLenOp {
     #[inline]
-    pub(crate) fn compare(op: CmpOp, val: u16) -> Self {
+    pub(crate) fn compare(op: CmpOp, val: u32) -> Self {
         Self::Compare { op, val }
     }
 
-    fn is_match(&self, len: u16) -> bool {
+    fn is_match(&self, len: u32) -> bool {
         match self {
             PayloadLenOp::Compare { op, val } => match op {
                 CmpOp::Equal => len == *val,
@@ -311,20 +311,20 @@ impl Clause {
                 .unwrap_or_default(),
             Clause::PortDst(port_op) => matcher
                 .dstport
-                .map(|p| port_op.is_match(p))
+                .map(|p| port_op.is_match(p.into()))
                 .unwrap_or_default(),
             Clause::PortSrc(port_op) => matcher
                 .srcport
-                .map(|p| port_op.is_match(p))
+                .map(|p| port_op.is_match(p.into()))
                 .unwrap_or_default(),
             Clause::Port(port_op) => {
                 matcher
                     .srcport
-                    .map(|p| port_op.is_match(p))
+                    .map(|p| port_op.is_match(p.into()))
                     .unwrap_or_default()
                     || matcher
                         .dstport
-                        .map(|p| port_op.is_match(p))
+                        .map(|p| port_op.is_match(p.into()))
                         .unwrap_or_default()
             }
             Clause::EthDst(eth_op) => matcher
@@ -369,7 +369,7 @@ impl Clause {
                 .unwrap_or_default(),
             Clause::PayloadLen(plen_op) => matcher
                 .payload
-                .map(|p| plen_op.is_match(p.len() as u16))
+                .map(|p| plen_op.is_match(p.len() as u32))
                 .unwrap_or_default(),
         }
     }
@@ -513,7 +513,7 @@ pub struct Matcher<'e, 'p> {
     dst_ip: Option<IpNet>,
     srcport: Option<u16>,
     dstport: Option<u16>,
-    vlan: Option<u16>,
+    vlan: Option<u32>,
     payload: Option<&'p [u8]>,
 }
 
@@ -531,9 +531,9 @@ impl<'e, 'p> Matcher<'e, 'p> {
     }
 
     /// Whether the packet has vlan data
-    pub fn vlan(mut self, val: u16) -> Self {
+    pub fn vlan(mut self, val: impl Into<u32>) -> Self {
         self.is_vlan = Some(true);
-        self.vlan = Some(val);
+        self.vlan = Some(val.into());
         self
     }
 
@@ -832,18 +832,18 @@ mod tests {
     fn test_single_clause_port_expressions() {
         init_test_logging();
 
-        let srcport = 26112;
-        let dstport = 80;
+        let srcport: u16 = 26112;
+        let dstport: u16 = 80;
         let clauses = [
-            Clause::Port(ValOp::compare(CmpOp::Equal, srcport)),
-            Clause::Port(ValOp::compare(CmpOp::Equal, dstport)),
-            Clause::PortSrc(ValOp::compare(CmpOp::Equal, srcport)),
-            Clause::PortDst(ValOp::compare(CmpOp::Equal, dstport)),
-            Clause::Port(ValOp::match_any(vec![srcport])),
-            Clause::Port(ValOp::match_any(vec![dstport])),
+            Clause::Port(ValOp::compare(CmpOp::Equal, srcport.into())),
+            Clause::Port(ValOp::compare(CmpOp::Equal, dstport.into())),
+            Clause::PortSrc(ValOp::compare(CmpOp::Equal, srcport.into())),
+            Clause::PortDst(ValOp::compare(CmpOp::Equal, dstport.into())),
+            Clause::Port(ValOp::match_any(vec![srcport.into()])),
+            Clause::Port(ValOp::match_any(vec![dstport.into()])),
             Clause::Port(ValOp::match_none(vec![1, 2, 3])),
-            Clause::PortSrc(ValOp::match_any(vec![srcport])),
-            Clause::PortDst(ValOp::match_any(vec![dstport])),
+            Clause::PortSrc(ValOp::match_any(vec![srcport.into()])),
+            Clause::PortDst(ValOp::match_any(vec![dstport.into()])),
             Clause::PortDst(ValOp::match_none(vec![1, 2, 3])),
         ];
         for clause in clauses.into_iter() {
