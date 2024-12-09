@@ -4,7 +4,8 @@
 
 * tcp:           bool
 * udp:           bool
-* vlan:          bool
+* vlan:          bool 
+* arp:           bool
 * eth.addr:      byte-string | regex
 * eth.dst:       byte-string | regex
 * eth.src:       byte-string | regex
@@ -27,7 +28,8 @@ use the fields name with or without logical operations.
 Example:
 * 'tcp'
 * 'not udp'
-  
+* '!arp'
+
 ### byte-string
 
 hexadecimal numbers separated by ':'.

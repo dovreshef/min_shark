@@ -7,112 +7,115 @@ use derive_more::Constructor;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
 pub(crate) enum TokenKind {
     /// Literal `tcp`
-    #[display(fmt = "tcp")]
+    #[display("tcp")]
     LitTcp,
     /// Literal `udp`
-    #[display(fmt = "udp")]
+    #[display("udp")]
     LitUdp,
     /// Literal `vlan`
-    #[display(fmt = "vlan")]
+    #[display("vlan")]
     LitVlan,
     /// Literal `eth.addr`
-    #[display(fmt = "eth.addr")]
+    #[display("eth.addr")]
     LitEthAddr,
     /// Literal `eth.dst`
-    #[display(fmt = "eth.dst")]
+    #[display("eth.dst")]
     LitEthDst,
     /// Literal `eth.src`
-    #[display(fmt = "eth.src")]
+    #[display("eth.src")]
     LitEthSrc,
     /// Literal `ip.addr`
-    #[display(fmt = "ip.addr")]
+    #[display("ip.addr")]
     LitIpAddr,
     /// Literal `ip.dst`
-    #[display(fmt = "ip.dst")]
+    #[display("ip.dst")]
     LitIpDst,
     /// Literal `ip.src`
-    #[display(fmt = "ip.src")]
+    #[display("ip.src")]
     LitIpSrc,
     /// Literal `vlan.id`
-    #[display(fmt = "vlan.id")]
+    #[display("vlan.id")]
     LitVlanId,
     /// Literal `port`
-    #[display(fmt = "port")]
+    #[display("port")]
     LitPort,
     /// Literal `dstport`
-    #[display(fmt = "dstport")]
+    #[display("dstport")]
     LitPortDst,
     /// Literal `srcport`
-    #[display(fmt = "srcport")]
+    #[display("srcport")]
     LitPortSrc,
     /// Literal `payload`
-    #[display(fmt = "payload")]
+    #[display("payload")]
     LitPayload,
     /// Literal `payload.len`
-    #[display(fmt = "payload.len")]
+    #[display("payload.len")]
     LitPayloadLen,
+    /// Literal 'arp'
+    #[display("arp")]
+    LitArp,
     /// `,`
-    #[display(fmt = ",")]
+    #[display(",")]
     Comma,
     /// `not` or `!`
-    #[display(fmt = "not")]
+    #[display("not")]
     Not,
     /// `or` or `||`
-    #[display(fmt = "or")]
+    #[display("or")]
     Or,
     /// `and` or `&&`
-    #[display(fmt = "and")]
+    #[display("and")]
     And,
     /// `in`
-    #[display(fmt = "in")]
+    #[display("in")]
     In,
     /// `contains`
-    #[display(fmt = "contains")]
+    #[display("contains")]
     Contains,
     /// `~` or `matches` for regex matching
-    #[display(fmt = "matches")]
+    #[display("matches")]
     RegexMatch,
     /// `==` or `eq`
-    #[display(fmt = "==")]
+    #[display("==")]
     Equal,
     /// `!=` or `ne`
-    #[display(fmt = "!=")]
+    #[display("!=")]
     NotEqual,
     /// `<` or `lt`
-    #[display(fmt = "<")]
+    #[display("<")]
     LessThan,
     /// `<=` or `le`
-    #[display(fmt = "<=")]
+    #[display("<=")]
     LessEqual,
     /// `>` or `gt`
-    #[display(fmt = ">")]
+    #[display(">")]
     GreaterThan,
     /// `>=` or `ge`
-    #[display(fmt = ">=")]
+    #[display(">=")]
     GreaterEqual,
     /// `(`
-    #[display(fmt = "(")]
+    #[display("(")]
     OpenParen,
     /// `)`
-    #[display(fmt = ")")]
+    #[display(")")]
     CloseParen,
     /// `{`
-    #[display(fmt = "{{")]
+    #[display("{{")]
     OpenBrace,
     /// `}`
-    #[display(fmt = "}}")]
+    #[display("}}")]
     CloseBrace,
     /// A value
-    #[display(fmt = "a value")]
+    #[display("a value")]
     Value,
     /// A quoted value, either with "" or ''
-    #[display(fmt = "a quoted value")]
+    #[display("a quoted value")]
     QuotedValue,
     /// For good errors, it's better to lex everything and handle failure at parsing.
-    #[display(fmt = "an error")]
+    #[display("an error")]
     Error,
     /// End of input
-    #[display(fmt = "end of input")]
+    #[display("end of input")]
     EoF,
 }
 
@@ -208,6 +211,7 @@ impl<'a> Lexer<'a> {
             "srcport" => TokenKind::LitPortSrc,
             "payload" => TokenKind::LitPayload,
             "payload.len" => TokenKind::LitPayloadLen,
+            "arp" => TokenKind::LitArp,
             "le" => TokenKind::LessEqual,
             "lt" => TokenKind::LessThan,
             "ge" => TokenKind::GreaterEqual,
@@ -400,8 +404,10 @@ mod tests {
         use TokenKind::*;
         init_test_logging();
 
-        let inputs = ["tcp", "udp", "vlan"];
-        let expected = &[[(LitTcp, "tcp")], [(LitUdp, "udp")], [(LitVlan, "vlan")]];
+        let inputs = ["tcp", "udp", "vlan", "arp"];
+        let expected = &[[(LitTcp, "tcp")], [(LitUdp, "udp")], [(LitVlan, "vlan")], [
+            (LitArp, "arp"),
+        ]];
         for (input, expected) in inputs.into_iter().zip(expected) {
             compare_input_tokens(input, expected);
         }

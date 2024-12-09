@@ -32,32 +32,32 @@ impl Eq for RegexMatcher {}
 /// List of the supported comparison operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum CmpOp {
-    #[display(fmt = "==")]
+    #[display("==")]
     Equal,
-    #[display(fmt = "!=")]
+    #[display("!=")]
     NotEqual,
-    #[display(fmt = "<")]
+    #[display("<")]
     LessThan,
-    #[display(fmt = "<=")]
+    #[display("<=")]
     LessEqual,
-    #[display(fmt = ">")]
+    #[display(">")]
     GreaterThan,
-    #[display(fmt = ">=")]
+    #[display(">=")]
     GreaterEqual,
 }
 
 /// List of supported ethernet operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum EthOp {
-    #[display(fmt = "{op} {val}")]
+    #[display("{op} {val}")]
     Compare { op: CmpOp, val: MacAddr },
-    #[display(fmt = "in {_0:?}")]
+    #[display("in {_0:?}")]
     MatchAny(Vec<MacAddr>),
-    #[display(fmt = "not in {_0:?}")]
+    #[display("not in {_0:?}")]
     MatchNone(Vec<MacAddr>),
-    #[display(fmt = "contains {_0:?}")]
+    #[display("contains {_0:?}")]
     Contains(Vec<u8>),
-    #[display(fmt = "matches {_0}")]
+    #[display("matches {_0}")]
     RegexMatch(RegexMatcher),
 }
 
@@ -108,11 +108,11 @@ impl EthOp {
 /// List of supported IP operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum IpOp {
-    #[display(fmt = "{op} {val}")]
+    #[display("{op} {val}")]
     Compare { op: CmpOp, val: IpNet },
-    #[display(fmt = "in {_0:?}")]
+    #[display("in {_0:?}")]
     MatchAny(Vec<IpNet>),
-    #[display(fmt = "not in {_0:?}")]
+    #[display("not in {_0:?}")]
     MatchNone(Vec<IpNet>),
 }
 
@@ -151,11 +151,11 @@ impl IpOp {
 /// List of supported Port operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum ValOp {
-    #[display(fmt = "{op} {val}")]
+    #[display("{op} {val}")]
     Compare { op: CmpOp, val: u32 },
-    #[display(fmt = "in {_0:?}")]
+    #[display("in {_0:?}")]
     MatchAny(Vec<u32>),
-    #[display(fmt = "not in {_0:?}")]
+    #[display("not in {_0:?}")]
     MatchNone(Vec<u32>),
 }
 
@@ -194,9 +194,9 @@ impl ValOp {
 /// List of supported payload operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum PayloadOp {
-    #[display(fmt = "contains {_0:?}")]
+    #[display("contains {_0:?}")]
     Contains(Vec<u8>),
-    #[display(fmt = "matches {_0}")]
+    #[display("matches {_0}")]
     RegexMatch(RegexMatcher),
 }
 
@@ -222,7 +222,7 @@ impl PayloadOp {
 /// List of supported Port operations
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum PayloadLenOp {
-    #[display(fmt = "{op} {val}")]
+    #[display("{op} {val}")]
     Compare { op: CmpOp, val: u32 },
 }
 
@@ -252,49 +252,52 @@ impl PayloadLenOp {
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 pub enum Clause {
     /// Is Tcp
-    #[display(fmt = "tcp")]
+    #[display("tcp")]
     IsTcp,
     /// Is udp
-    #[display(fmt = "udp")]
+    #[display("udp")]
     IsUdp,
     /// Is vlan
-    #[display(fmt = "vlan")]
+    #[display("vlan")]
     IsVlan,
+    /// Match ARP
+    #[display("arp")]
+    IsArp,
     /// Match any of the vlans
-    #[display(fmt = "vlan.id {_0}")]
+    #[display("vlan.id {_0}")]
     VlanId(ValOp),
     /// Match any of destination ports
-    #[display(fmt = "dstport {_0}")]
+    #[display("dstport {_0}")]
     PortDst(ValOp),
     /// Match any of source ports
-    #[display(fmt = "srcport {_0}")]
+    #[display("srcport {_0}")]
     PortSrc(ValOp),
     /// Match any of either the source or destination ports
-    #[display(fmt = "port {_0}")]
+    #[display("port {_0}")]
     Port(ValOp),
     /// Ethernet destination match
-    #[display(fmt = "eth.dst {_0}")]
+    #[display("eth.dst {_0}")]
     EthDst(EthOp),
     /// Ethernet source match
-    #[display(fmt = "eth.src {_0}")]
+    #[display("eth.src {_0}")]
     EthSrc(EthOp),
     /// Ethernet either source or destination match
-    #[display(fmt = "eth {_0}")]
+    #[display("eth {_0}")]
     EthAddr(EthOp),
     /// Destination IP match
-    #[display(fmt = "ip.dst {_0}")]
+    #[display("ip.dst {_0}")]
     IpDst(IpOp),
     /// Source IP match
-    #[display(fmt = "ip.src {_0}")]
+    #[display("ip.src {_0}")]
     IpSrc(IpOp),
     /// Either source or destination IP
-    #[display(fmt = "ip {_0}")]
+    #[display("ip {_0}")]
     IpAddr(IpOp),
     /// Match payload
-    #[display(fmt = "payload {_0}")]
+    #[display("payload {_0}")]
     Payload(PayloadOp),
     /// Match payload length
-    #[display(fmt = "payload.len {_0}")]
+    #[display("payload.len {_0}")]
     PayloadLen(PayloadLenOp),
 }
 
@@ -305,6 +308,7 @@ impl Clause {
             Clause::IsTcp => matcher.is_tcp.unwrap_or_default(),
             Clause::IsUdp => matcher.is_udp.unwrap_or_default(),
             Clause::IsVlan => matcher.is_vlan.unwrap_or_default(),
+            Clause::IsArp => matcher.is_arp.unwrap_or_default(),
             Clause::VlanId(vlan_op) => matcher
                 .vlan
                 .map(|v| vlan_op.is_match(v))
@@ -477,6 +481,7 @@ impl Expression {
             is_tcp: None,
             is_udp: None,
             is_vlan: None,
+            is_arp: None,
             src_eth: None,
             dst_eth: None,
             src_ip: None,
@@ -507,6 +512,7 @@ pub struct Matcher<'e, 'p> {
     is_tcp: Option<bool>,
     is_udp: Option<bool>,
     is_vlan: Option<bool>,
+    is_arp: Option<bool>,
     src_eth: Option<MacAddr>,
     dst_eth: Option<MacAddr>,
     src_ip: Option<IpNet>,
@@ -517,7 +523,7 @@ pub struct Matcher<'e, 'p> {
     payload: Option<&'p [u8]>,
 }
 
-impl<'e, 'p> Matcher<'e, 'p> {
+impl<'p> Matcher<'_, 'p> {
     /// Whether the packet has tcp data
     pub fn tcp(mut self, val: bool) -> Self {
         self.is_tcp = Some(val);
@@ -534,6 +540,12 @@ impl<'e, 'p> Matcher<'e, 'p> {
     pub fn vlan(mut self, val: impl Into<u32>) -> Self {
         self.is_vlan = Some(true);
         self.vlan = Some(val.into());
+        self
+    }
+
+    /// Whether the packet has arp data
+    pub fn arp(mut self, val: bool) -> Self {
+        self.is_arp = Some(val);
         self
     }
 
@@ -802,6 +814,32 @@ mod tests {
         let expression = Expression::from(Clause::IsUdp);
         info!("Evaluating expression \"{expression}\"");
         let res = expression.matcher().udp(true).is_match();
+        assert!(res);
+    }
+
+    #[test]
+    fn test_single_clause_arp_expression() {
+        init_test_logging();
+
+        for (exp, is_arp, expected) in [
+            (Expression::from(Clause::IsArp), true, true),
+            (Expression::from(Clause::IsArp), false, false),
+            (Expression::not(Clause::IsArp), true, false),
+            (Expression::not(Clause::IsArp), false, true),
+        ] {
+            info!("Evaluating expression \"{exp}\"");
+            let res = exp.matcher().arp(is_arp).is_match();
+            assert_eq!(res, expected);
+        }
+    }
+
+    #[test]
+    fn test_complex_not_arp_expression() {
+        init_test_logging();
+        let expression =
+            Expression::not(Clause::IsArp).and(Clause::Port(ValOp::match_any(vec![80, 443])));
+        info!("Evaluating expression \"{expression}\"");
+        let res = expression.matcher().arp(false).srcport(80).is_match();
         assert!(res);
     }
 

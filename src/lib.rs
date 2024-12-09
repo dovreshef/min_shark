@@ -11,8 +11,8 @@ mod test_utils;
 mod value_parsers;
 
 pub use driver::{
-    parse,
     ParseError,
+    parse,
 };
 pub use expression::{
     Expression,
