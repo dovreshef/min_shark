@@ -4,6 +4,7 @@
 //! * Parse the list of tokens into an Expression object, or return the parsing error.
 //! * For errors, try to figure out the root and to present it in a human friendly manner.
 use crate::{
+    Expression,
     input::Input,
     lexer::{
         Lexer,
@@ -11,7 +12,6 @@ use crate::{
         TokenKind,
     },
     parser::Parser,
-    Expression,
 };
 
 /// What we expected to find where we found the error
@@ -152,6 +152,7 @@ pub fn parse(filter_expr: &str) -> Result<Expression, ParseError> {
 mod tests {
     use super::parse;
     use crate::{
+        Expression,
         driver::ErrorKind,
         expression::{
             Clause,
@@ -164,7 +165,6 @@ mod tests {
         },
         mac_addr::MacAddr,
         test_utils::init_test_logging,
-        Expression,
     };
     use regex::bytes::Regex;
     use tracing::info;

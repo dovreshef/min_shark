@@ -1,4 +1,5 @@
 use crate::{
+    Expression,
     driver::{
         ErrorKind,
         Expected,
@@ -25,7 +26,6 @@ use crate::{
         parse_regex,
         parse_u32,
     },
-    Expression,
 };
 use bstr::BStr;
 use std::vec::IntoIter;
@@ -362,6 +362,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 Clause::IsVlan
             }
+            TokenKind::LitArp => {
+                self.advance();
+                Clause::IsArp
+            }
             TokenKind::LitEthAddr => {
                 self.advance();
                 self.parse_ethernet_operations().map(Clause::EthAddr)?
@@ -482,6 +486,7 @@ mod tests {
         Parser,
     };
     use crate::{
+        Expression,
         expression::{
             Clause,
             CmpOp,
@@ -499,7 +504,6 @@ mod tests {
         },
         mac_addr::MacAddr,
         test_utils::init_test_logging,
-        Expression,
     };
     use ipnet::IpNet;
     use regex::bytes::Regex;
@@ -819,8 +823,8 @@ mod tests {
     fn test_parse_single_term() {
         init_test_logging();
 
-        let inputs = ["tcp", "udp", "vlan"];
-        let expected = [Clause::IsTcp, Clause::IsUdp, Clause::IsVlan];
+        let inputs = ["tcp", "udp", "vlan", "arp"];
+        let expected = [Clause::IsTcp, Clause::IsUdp, Clause::IsVlan, Clause::IsArp];
 
         // Validate we have an expected result for every input
         assert_eq!(inputs.len(), expected.len());
