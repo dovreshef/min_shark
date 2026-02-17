@@ -931,18 +931,66 @@ mod tests {
             "payload.len le 55",
         ];
         let expected = [
-            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::NotEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::NotEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::LessEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::LessEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::NotEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::NotEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterThan,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterThan,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::LessThan,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::LessThan,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::LessEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::LessEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(55),
+            )),
         ];
 
         // Validate we have an expected result for every input
@@ -1078,7 +1126,11 @@ mod tests {
             Clause::IpSrc(IpOp::match_none(vec![ip])),
             Clause::Payload(PayloadOp::contains(vec![0x00, 0x11])),
             Clause::Payload(PayloadOp::regex_match(regex_matcher)),
-            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(1))),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(1),
+            )),
         ];
 
         // Validate we have an expected result for every input
@@ -1186,7 +1238,12 @@ mod tests {
     fn test_parse_byte_read_simple() {
         init_test_logging();
 
-        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+        use crate::expression::{
+            ByteReadOp,
+            ByteReadSize,
+            Endian,
+            NumExpr,
+        };
 
         let inputs = [
             "payload.u8[0] == 0xff",
@@ -1276,7 +1333,13 @@ mod tests {
     fn test_parse_byte_read_with_payload_len() {
         init_test_logging();
 
-        use crate::expression::{ArithOp, ByteReadOp, ByteReadSize, Endian, NumExpr};
+        use crate::expression::{
+            ArithOp,
+            ByteReadOp,
+            ByteReadSize,
+            Endian,
+            NumExpr,
+        };
 
         let input = "payload.be32[0] == payload.len - 3";
         let expected = Clause::ByteRead(ByteReadOp::new(
@@ -1302,7 +1365,13 @@ mod tests {
     fn test_parse_byte_read_with_arithmetic_lhs() {
         init_test_logging();
 
-        use crate::expression::{ArithOp, ByteReadOp, ByteReadSize, Endian, NumExpr};
+        use crate::expression::{
+            ArithOp,
+            ByteReadOp,
+            ByteReadSize,
+            Endian,
+            NumExpr,
+        };
 
         let input = "payload.be16[0] + payload.be16[2] == 0xff";
         let expected = Clause::ByteRead(ByteReadOp::new(
@@ -1332,7 +1401,12 @@ mod tests {
     fn test_parse_byte_read_two_byte_reads() {
         init_test_logging();
 
-        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+        use crate::expression::{
+            ByteReadOp,
+            ByteReadSize,
+            Endian,
+            NumExpr,
+        };
 
         let input = "payload.be32[0] == payload.le32[4]";
         let expected = Clause::ByteRead(ByteReadOp::new(
@@ -1358,7 +1432,12 @@ mod tests {
     fn test_parse_byte_read_combined_with_logic() {
         init_test_logging();
 
-        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+        use crate::expression::{
+            ByteReadOp,
+            ByteReadSize,
+            Endian,
+            NumExpr,
+        };
 
         let input = "payload.be16[0] == 0x0800 and payload.u8[9] == 6";
         let expected = Expression::And(vec![
@@ -1394,13 +1473,13 @@ mod tests {
         init_test_logging();
 
         let inputs = [
-            "payload.be32",            // missing bracket
-            "payload.be32[",           // missing offset
-            "payload.be32[]",          // empty offset
-            "payload.be32[0",          // missing close bracket
-            "payload.be32[0]",         // missing comparison
-            "payload.be32[0] ==",      // missing RHS
-            "payload.be32[0] == abc",  // invalid number
+            "payload.be32",           // missing bracket
+            "payload.be32[",          // missing offset
+            "payload.be32[]",         // empty offset
+            "payload.be32[0",         // missing close bracket
+            "payload.be32[0]",        // missing comparison
+            "payload.be32[0] ==",     // missing RHS
+            "payload.be32[0] == abc", // invalid number
         ];
 
         for input in inputs {

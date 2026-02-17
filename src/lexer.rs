@@ -176,7 +176,7 @@ impl<'a> Lexer<'a> {
         while self
             .input
             .get(self.pos)
-            .map_or(false, |c| c.is_ascii_whitespace())
+            .is_some_and(|c| c.is_ascii_whitespace())
         {
             self.pos += 1;
         }
@@ -465,9 +465,12 @@ mod tests {
         init_test_logging();
 
         let inputs = ["tcp", "udp", "vlan", "arp"];
-        let expected = &[[(LitTcp, "tcp")], [(LitUdp, "udp")], [(LitVlan, "vlan")], [
-            (LitArp, "arp"),
-        ]];
+        let expected = &[
+            [(LitTcp, "tcp")],
+            [(LitUdp, "udp")],
+            [(LitVlan, "vlan")],
+            [(LitArp, "arp")],
+        ];
         for (input, expected) in inputs.into_iter().zip(expected) {
             compare_input_tokens(input, expected);
         }

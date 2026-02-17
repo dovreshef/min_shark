@@ -16,7 +16,7 @@ pub struct RegexMatcher(Regex);
 
 impl PartialEq for RegexMatcher {
     #[inline]
-    fn eq(&self, other: &Self) -> bool { 
+    fn eq(&self, other: &Self) -> bool {
         self.0.as_str() == other.0.as_str()
     }
 }
@@ -629,7 +629,7 @@ impl Expression {
 
     /// Return a Matcher for the expression.
     /// This can later be use to see if the expression matches the packet.
-    pub fn matcher(&self) -> Matcher {
+    pub fn matcher(&self) -> Matcher<'_, '_> {
         Matcher {
             expression: self,
             is_tcp: None,
@@ -1209,9 +1209,21 @@ mod tests {
         let payload =
             b"The trouble with thinking was that, once you started, you went on doing it.";
         let operations = [
-            ByteReadOp::new(CmpOp::GreaterEqual, NumExpr::PayloadLen, NumExpr::Constant(0)),
-            ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(0)),
-            ByteReadOp::new(CmpOp::LessEqual, NumExpr::PayloadLen, NumExpr::Constant(100)),
+            ByteReadOp::new(
+                CmpOp::GreaterEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(0),
+            ),
+            ByteReadOp::new(
+                CmpOp::GreaterThan,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(0),
+            ),
+            ByteReadOp::new(
+                CmpOp::LessEqual,
+                NumExpr::PayloadLen,
+                NumExpr::Constant(100),
+            ),
             ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(100)),
             ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(75)),
             ByteReadOp::new(CmpOp::NotEqual, NumExpr::PayloadLen, NumExpr::Constant(16)),
@@ -1450,5 +1462,189 @@ mod tests {
         );
         let expression = Expression::Single(Clause::ByteRead(op));
         assert!(expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_be64() {
+        init_test_logging();
+
+        let payload = &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]; // be64 = 256
+        let op = ByteReadOp::new(
+            CmpOp::Equal,
+            super::NumExpr::ByteRead {
+                offset: 0,
+                size: super::ByteReadSize::U64,
+                endian: super::Endian::Big,
+            },
+            super::NumExpr::Constant(256),
+        );
+        let expression = Expression::Single(Clause::ByteRead(op));
+        assert!(expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_le64() {
+        init_test_logging();
+
+        let payload = &[0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]; // le64 = 256
+        let op = ByteReadOp::new(
+            CmpOp::Equal,
+            super::NumExpr::ByteRead {
+                offset: 0,
+                size: super::ByteReadSize::U64,
+                endian: super::Endian::Little,
+            },
+            super::NumExpr::Constant(256),
+        );
+        let expression = Expression::Single(Clause::ByteRead(op));
+        assert!(expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_le32() {
+        init_test_logging();
+
+        let payload = &[0x01, 0x00, 0x00, 0x00]; // le32 = 1
+        let op = ByteReadOp::new(
+            CmpOp::Equal,
+            super::NumExpr::ByteRead {
+                offset: 0,
+                size: super::ByteReadSize::U32,
+                endian: super::Endian::Little,
+            },
+            super::NumExpr::Constant(1),
+        );
+        let expression = Expression::Single(Clause::ByteRead(op));
+        assert!(expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_all_cmp_ops() {
+        init_test_logging();
+
+        let payload = &[0x0A]; // u8 = 10
+        let make_op = |cmp: CmpOp, rhs: u64| {
+            ByteReadOp::new(
+                cmp,
+                super::NumExpr::ByteRead {
+                    offset: 0,
+                    size: super::ByteReadSize::U8,
+                    endian: super::Endian::Big,
+                },
+                super::NumExpr::Constant(rhs),
+            )
+        };
+
+        // GreaterThan: 10 > 5
+        let expr = Expression::Single(Clause::ByteRead(make_op(CmpOp::GreaterThan, 5)));
+        assert!(expr.matcher().payload(payload).is_match());
+
+        // LessEqual: 10 <= 10
+        let expr = Expression::Single(Clause::ByteRead(make_op(CmpOp::LessEqual, 10)));
+        assert!(expr.matcher().payload(payload).is_match());
+
+        // LessEqual: 10 <= 9 → false
+        let expr = Expression::Single(Clause::ByteRead(make_op(CmpOp::LessEqual, 9)));
+        assert!(!expr.matcher().payload(payload).is_match());
+
+        // GreaterThan: 10 > 10 → false
+        let expr = Expression::Single(Clause::ByteRead(make_op(CmpOp::GreaterThan, 10)));
+        assert!(!expr.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_arithmetic_overflow_returns_none() {
+        init_test_logging();
+
+        let payload = &[0x01];
+        // u64::MAX + 1 should overflow → checked_add returns None → no match
+        let op = ByteReadOp::new(
+            CmpOp::Equal,
+            super::NumExpr::Arith {
+                op: super::ArithOp::Add,
+                lhs: Box::new(super::NumExpr::Constant(u64::MAX)),
+                rhs: Box::new(super::NumExpr::Constant(1)),
+            },
+            super::NumExpr::Constant(0),
+        );
+        let expression = Expression::Single(Clause::ByteRead(op));
+        assert!(!expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_arithmetic_underflow_returns_none() {
+        init_test_logging();
+
+        let payload = &[0x01];
+        // 0 - 1 should underflow → checked_sub returns None → no match
+        let op = ByteReadOp::new(
+            CmpOp::Equal,
+            super::NumExpr::Arith {
+                op: super::ArithOp::Sub,
+                lhs: Box::new(super::NumExpr::Constant(0)),
+                rhs: Box::new(super::NumExpr::Constant(1)),
+            },
+            super::NumExpr::Constant(0),
+        );
+        let expression = Expression::Single(Clause::ByteRead(op));
+        assert!(!expression.matcher().payload(payload).is_match());
+    }
+
+    #[test]
+    fn test_regex_matcher_partial_eq() {
+        let re1 = RegexMatcher::new(Regex::new("abc").unwrap());
+        let re2 = RegexMatcher::new(Regex::new("abc").unwrap());
+        let re3 = RegexMatcher::new(Regex::new("def").unwrap());
+        assert_eq!(re1, re2);
+        assert_ne!(re1, re3);
+    }
+
+    #[test]
+    fn test_regex_matcher_display() {
+        let re = RegexMatcher::new(Regex::new("abc.*xyz").unwrap());
+        assert_eq!(format!("{re}"), "\"abc.*xyz\"");
+    }
+
+    #[test]
+    fn test_num_expr_display() {
+        // Constant
+        assert_eq!(format!("{}", super::NumExpr::Constant(42)), "42");
+        // PayloadLen
+        assert_eq!(format!("{}", super::NumExpr::PayloadLen), "payload.len");
+        // ByteRead u8
+        let expr = super::NumExpr::ByteRead {
+            offset: 5,
+            size: super::ByteReadSize::U8,
+            endian: super::Endian::Big,
+        };
+        assert_eq!(format!("{expr}"), "payload.u8[5]");
+        // ByteRead be32
+        let expr = super::NumExpr::ByteRead {
+            offset: 0,
+            size: super::ByteReadSize::U32,
+            endian: super::Endian::Big,
+        };
+        assert_eq!(format!("{expr}"), "payload.be32[0]");
+        // ByteRead le16
+        let expr = super::NumExpr::ByteRead {
+            offset: 2,
+            size: super::ByteReadSize::U16,
+            endian: super::Endian::Little,
+        };
+        assert_eq!(format!("{expr}"), "payload.le16[2]");
+        // ByteRead be64
+        let expr = super::NumExpr::ByteRead {
+            offset: 0,
+            size: super::ByteReadSize::U64,
+            endian: super::Endian::Big,
+        };
+        assert_eq!(format!("{expr}"), "payload.be64[0]");
+        // Arith
+        let expr = super::NumExpr::Arith {
+            op: super::ArithOp::Add,
+            lhs: Box::new(super::NumExpr::PayloadLen),
+            rhs: Box::new(super::NumExpr::Constant(3)),
+        };
+        assert_eq!(format!("{expr}"), "payload.len + 3");
     }
 }

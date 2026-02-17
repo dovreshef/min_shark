@@ -290,8 +290,18 @@ mod tests {
             .into(),
             Clause::PortSrc(ValOp::compare(CmpOp::LessThan, 1024)).into(),
             Expression::And(vec![
-                Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(50))).into(),
-                Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(500))).into(),
+                Clause::ByteRead(ByteReadOp::new(
+                    CmpOp::GreaterThan,
+                    NumExpr::PayloadLen,
+                    NumExpr::Constant(50),
+                ))
+                .into(),
+                Clause::ByteRead(ByteReadOp::new(
+                    CmpOp::LessThan,
+                    NumExpr::PayloadLen,
+                    NumExpr::Constant(500),
+                ))
+                .into(),
             ]),
             Clause::Payload(PayloadOp::regex_match(
                 Regex::new("GET /secret").unwrap().into(),
@@ -570,8 +580,7 @@ mod tests {
     fn test_byte_read_e2e_combined_with_existing() {
         init_test_logging();
 
-        let expr =
-            parse("tcp and payload.be16[0] == 0x1234 and payload.len > 2").unwrap();
+        let expr = parse("tcp and payload.be16[0] == 0x1234 and payload.len > 2").unwrap();
 
         let payload = &[0x12, 0x34, 0x56];
         assert!(expr.matcher().tcp(true).payload(payload).is_match());
@@ -587,10 +596,9 @@ mod tests {
         // With a 16-byte payload:
         //   be32[0] = 12 → payload.len(16) - 4 = 12 ✓
         //   be16[4] = 15 → 15 + 1 = 16 = payload.len ✓
-        let expr = parse(
-            "payload.len - 4 == payload.be32[0] and payload.be16[4] + 1 == payload.len",
-        )
-        .unwrap();
+        let expr =
+            parse("payload.len - 4 == payload.be32[0] and payload.be16[4] + 1 == payload.len")
+                .unwrap();
 
         let mut payload = vec![0u8; 16];
         payload[3] = 12; // be32[0] = 12
