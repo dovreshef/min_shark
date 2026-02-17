@@ -54,6 +54,27 @@ pub(crate) enum TokenKind {
     /// Literal 'arp'
     #[display("arp")]
     LitArp,
+    /// Literal `payload.u8`
+    #[display("payload.u8")]
+    LitPayloadU8,
+    /// Literal `payload.be16`
+    #[display("payload.be16")]
+    LitPayloadBe16,
+    /// Literal `payload.le16`
+    #[display("payload.le16")]
+    LitPayloadLe16,
+    /// Literal `payload.be32`
+    #[display("payload.be32")]
+    LitPayloadBe32,
+    /// Literal `payload.le32`
+    #[display("payload.le32")]
+    LitPayloadLe32,
+    /// Literal `payload.be64`
+    #[display("payload.be64")]
+    LitPayloadBe64,
+    /// Literal `payload.le64`
+    #[display("payload.le64")]
+    LitPayloadLe64,
     /// `,`
     #[display(",")]
     Comma,
@@ -105,6 +126,18 @@ pub(crate) enum TokenKind {
     /// `}`
     #[display("}}")]
     CloseBrace,
+    /// `[`
+    #[display("[")]
+    OpenBracket,
+    /// `]`
+    #[display("]")]
+    CloseBracket,
+    /// `+`
+    #[display("+")]
+    Plus,
+    /// `-`
+    #[display("-")]
+    Minus,
     /// A value
     #[display("a value")]
     Value,
@@ -211,6 +244,13 @@ impl<'a> Lexer<'a> {
             "srcport" => TokenKind::LitPortSrc,
             "payload" => TokenKind::LitPayload,
             "payload.len" => TokenKind::LitPayloadLen,
+            "payload.u8" => TokenKind::LitPayloadU8,
+            "payload.be16" => TokenKind::LitPayloadBe16,
+            "payload.le16" => TokenKind::LitPayloadLe16,
+            "payload.be32" => TokenKind::LitPayloadBe32,
+            "payload.le32" => TokenKind::LitPayloadLe32,
+            "payload.be64" => TokenKind::LitPayloadBe64,
+            "payload.le64" => TokenKind::LitPayloadLe64,
             "arp" => TokenKind::LitArp,
             "le" => TokenKind::LessEqual,
             "lt" => TokenKind::LessThan,
@@ -323,6 +363,26 @@ impl<'a> Lexer<'a> {
                 }
                 (b'!', _) => {
                     let st = Token::new(TokenKind::Not, self.pos, self.pos + 1);
+                    tokens.push(st);
+                    self.consume(1);
+                }
+                (b'[', _) => {
+                    let st = Token::new(TokenKind::OpenBracket, self.pos, self.pos + 1);
+                    tokens.push(st);
+                    self.consume(1);
+                }
+                (b']', _) => {
+                    let st = Token::new(TokenKind::CloseBracket, self.pos, self.pos + 1);
+                    tokens.push(st);
+                    self.consume(1);
+                }
+                (b'+', _) => {
+                    let st = Token::new(TokenKind::Plus, self.pos, self.pos + 1);
+                    tokens.push(st);
+                    self.consume(1);
+                }
+                (b'-', _) => {
+                    let st = Token::new(TokenKind::Minus, self.pos, self.pos + 1);
                     tokens.push(st);
                     self.consume(1);
                 }
@@ -867,6 +927,108 @@ mod tests {
             vec![(TokenKind::Error, "\"")],
             vec![(TokenKind::Error, "^")],
             vec![(TokenKind::Error, "%")],
+        ];
+        for (input, expected) in inputs.into_iter().zip(expected) {
+            compare_input_tokens(input, expected);
+        }
+    }
+
+    #[test]
+    fn test_lex_byte_read_keywords() {
+        use TokenKind::*;
+        init_test_logging();
+
+        let inputs = [
+            "payload.u8[0]",
+            "payload.be16[4]",
+            "payload.le16[4]",
+            "payload.be32[0]",
+            "payload.le32[8]",
+            "payload.be64[0]",
+            "payload.le64[16]",
+        ];
+        let expected = &[
+            vec![
+                (LitPayloadU8, "payload.u8"),
+                (OpenBracket, "["),
+                (Value, "0"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadBe16, "payload.be16"),
+                (OpenBracket, "["),
+                (Value, "4"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadLe16, "payload.le16"),
+                (OpenBracket, "["),
+                (Value, "4"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadBe32, "payload.be32"),
+                (OpenBracket, "["),
+                (Value, "0"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadLe32, "payload.le32"),
+                (OpenBracket, "["),
+                (Value, "8"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadBe64, "payload.be64"),
+                (OpenBracket, "["),
+                (Value, "0"),
+                (CloseBracket, "]"),
+            ],
+            vec![
+                (LitPayloadLe64, "payload.le64"),
+                (OpenBracket, "["),
+                (Value, "16"),
+                (CloseBracket, "]"),
+            ],
+        ];
+        for (input, expected) in inputs.into_iter().zip(expected) {
+            compare_input_tokens(input, expected);
+        }
+    }
+
+    #[test]
+    fn test_lex_byte_read_with_arithmetic() {
+        use TokenKind::*;
+        init_test_logging();
+
+        let inputs = [
+            "payload.be32[0] == payload.len - 3",
+            "payload.be16[0] + payload.be16[2] == 0xff",
+        ];
+        let expected = &[
+            vec![
+                (LitPayloadBe32, "payload.be32"),
+                (OpenBracket, "["),
+                (Value, "0"),
+                (CloseBracket, "]"),
+                (Equal, "=="),
+                (LitPayloadLen, "payload.len"),
+                (Minus, "-"),
+                (Value, "3"),
+            ],
+            vec![
+                (LitPayloadBe16, "payload.be16"),
+                (OpenBracket, "["),
+                (Value, "0"),
+                (CloseBracket, "]"),
+                (Plus, "+"),
+                (LitPayloadBe16, "payload.be16"),
+                (OpenBracket, "["),
+                (Value, "2"),
+                (CloseBracket, "]"),
+                (Equal, "=="),
+                (Value, "0xff"),
+            ],
         ];
         for (input, expected) in inputs.into_iter().zip(expected) {
             compare_input_tokens(input, expected);

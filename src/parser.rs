@@ -5,11 +5,15 @@ use crate::{
         Expected,
     },
     expression::{
+        ArithOp,
+        ByteReadOp,
+        ByteReadSize,
         Clause,
         CmpOp,
+        Endian,
         EthOp,
         IpOp,
-        PayloadLenOp,
+        NumExpr,
         PayloadOp,
         ValOp,
     },
@@ -24,7 +28,9 @@ use crate::{
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
+        parse_u16_decimal,
         parse_u32,
+        parse_u64,
     },
 };
 use bstr::BStr;
@@ -332,20 +338,161 @@ impl<'a> Parser<'a> {
         Ok(payload_op)
     }
 
-    fn parse_payload_len_operations(&mut self) -> Result<PayloadLenOp, ErrorKind> {
-        let val_op = match self.parse_comparison_operator() {
-            Ok(cmp_op) => {
-                let num = self.parse_value(TokenKind::Value, &parse_u32, "number")?;
-                PayloadLenOp::compare(cmp_op, num)
+    /// Parse a byte-read bracket: `[offset]`, returning the offset.
+    fn parse_byte_read_bracket(&mut self) -> Result<u16, ErrorKind> {
+        self.advance_if(TokenKind::OpenBracket)?;
+        let offset = self.parse_value(TokenKind::Value, &parse_u16_decimal, "offset")?;
+        self.advance_if(TokenKind::CloseBracket)?;
+        Ok(offset)
+    }
+
+    /// Parse a single numeric atom: constant, payload.len, or byte-read.
+    fn parse_num_atom(&mut self) -> Result<NumExpr, ErrorKind> {
+        match self.current.kind {
+            TokenKind::LitPayloadLen => {
+                self.advance();
+                Ok(NumExpr::PayloadLen)
             }
-            _ => {
-                return Err(ErrorKind::unexpected(
-                    Expected::label("a payload length operation"),
-                    self.current,
-                ));
+            TokenKind::LitPayloadU8 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U8,
+                    endian: Endian::Big,
+                })
             }
+            TokenKind::LitPayloadBe16 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Big,
+                })
+            }
+            TokenKind::LitPayloadLe16 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Little,
+                })
+            }
+            TokenKind::LitPayloadBe32 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U32,
+                    endian: Endian::Big,
+                })
+            }
+            TokenKind::LitPayloadLe32 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U32,
+                    endian: Endian::Little,
+                })
+            }
+            TokenKind::LitPayloadBe64 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U64,
+                    endian: Endian::Big,
+                })
+            }
+            TokenKind::LitPayloadLe64 => {
+                self.advance();
+                let offset = self.parse_byte_read_bracket()?;
+                Ok(NumExpr::ByteRead {
+                    offset,
+                    size: ByteReadSize::U64,
+                    endian: Endian::Little,
+                })
+            }
+            TokenKind::Value => {
+                let val = self.parse_value(TokenKind::Value, &parse_u64, "number")?;
+                Ok(NumExpr::Constant(val))
+            }
+            TokenKind::OpenParen => {
+                self.advance();
+                let expr = self.parse_num_expr()?;
+                self.advance_if(TokenKind::CloseParen)?;
+                Ok(expr)
+            }
+            _ => Err(ErrorKind::unexpected(
+                Expected::label("a numeric value"),
+                self.current,
+            )),
+        }
+    }
+
+    /// Parse a numeric expression with `+` and `-` operators (left-to-right, equal precedence).
+    fn parse_num_expr(&mut self) -> Result<NumExpr, ErrorKind> {
+        let mut expr = self.parse_num_atom()?;
+        loop {
+            let op = match self.current.kind {
+                TokenKind::Plus => ArithOp::Add,
+                TokenKind::Minus => ArithOp::Sub,
+                _ => break,
+            };
+            self.advance();
+            let rhs = self.parse_num_atom()?;
+            expr = NumExpr::Arith {
+                op,
+                lhs: Box::new(expr),
+                rhs: Box::new(rhs),
+            };
+        }
+        Ok(expr)
+    }
+
+    /// Parse a byte-read clause: `<num_expr> <cmp_op> <num_expr>`
+    /// The first byte-read keyword has already been consumed and turned into
+    /// the initial `lhs` NumExpr by the caller.
+    fn parse_byte_read_clause(&mut self, initial_atom: NumExpr) -> Result<Clause, ErrorKind> {
+        // Check for arithmetic on the LHS after the initial atom
+        let lhs = match self.current.kind {
+            TokenKind::Plus | TokenKind::Minus => {
+                let op = match self.current.kind {
+                    TokenKind::Plus => ArithOp::Add,
+                    _ => ArithOp::Sub,
+                };
+                self.advance();
+                let rhs = self.parse_num_atom()?;
+                let mut expr = NumExpr::Arith {
+                    op,
+                    lhs: Box::new(initial_atom),
+                    rhs: Box::new(rhs),
+                };
+                // Continue parsing more arithmetic
+                loop {
+                    let op = match self.current.kind {
+                        TokenKind::Plus => ArithOp::Add,
+                        TokenKind::Minus => ArithOp::Sub,
+                        _ => break,
+                    };
+                    self.advance();
+                    let rhs = self.parse_num_atom()?;
+                    expr = NumExpr::Arith {
+                        op,
+                        lhs: Box::new(expr),
+                        rhs: Box::new(rhs),
+                    };
+                }
+                expr
+            }
+            _ => initial_atom,
         };
-        Ok(val_op)
+        let cmp_op = self.parse_comparison_operator()?;
+        let rhs = self.parse_num_expr()?;
+        Ok(Clause::ByteRead(ByteReadOp::new(cmp_op, lhs, rhs)))
     }
 
     fn parse_single_clause_expression(&mut self) -> Result<Expression, ErrorKind> {
@@ -410,10 +557,17 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.parse_payload_operations().map(Clause::Payload)?
             }
-            TokenKind::LitPayloadLen => {
-                self.advance();
-                self.parse_payload_len_operations()
-                    .map(Clause::PayloadLen)?
+            TokenKind::LitPayloadLen
+            | TokenKind::LitPayloadU8
+            | TokenKind::LitPayloadBe16
+            | TokenKind::LitPayloadLe16
+            | TokenKind::LitPayloadBe32
+            | TokenKind::LitPayloadLe32
+            | TokenKind::LitPayloadBe64
+            | TokenKind::LitPayloadLe64 => {
+                // parse_num_atom handles the token kind → ByteRead conversion
+                let atom = self.parse_num_atom()?;
+                self.parse_byte_read_clause(atom)?
             }
             _ => {
                 return Err(ErrorKind::unexpected(
@@ -488,11 +642,12 @@ mod tests {
     use crate::{
         Expression,
         expression::{
+            ByteReadOp,
             Clause,
             CmpOp,
             EthOp,
             IpOp,
-            PayloadLenOp,
+            NumExpr,
             PayloadOp,
             RegexMatcher,
             ValOp,
@@ -776,18 +931,18 @@ mod tests {
             "payload.len le 55",
         ];
         let expected = [
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::NotEqual, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::NotEqual, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterThan, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterThan, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterEqual, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterEqual, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessThan, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessThan, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessEqual, 55)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessEqual, 55)),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::NotEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::NotEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::LessEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::LessEqual, NumExpr::PayloadLen, NumExpr::Constant(55))),
         ];
 
         // Validate we have an expected result for every input
@@ -810,6 +965,7 @@ mod tests {
             "payload.len == s0me",
             "payload.len in 55",
             "payload.len < ==",
+            "payload.len contains 55",
         ];
 
         for input in inputs {
@@ -922,7 +1078,7 @@ mod tests {
             Clause::IpSrc(IpOp::match_none(vec![ip])),
             Clause::Payload(PayloadOp::contains(vec![0x00, 0x11])),
             Clause::Payload(PayloadOp::regex_match(regex_matcher)),
-            Clause::PayloadLen(PayloadLenOp::compare(CmpOp::Equal, 1)),
+            Clause::ByteRead(ByteReadOp::new(CmpOp::Equal, NumExpr::PayloadLen, NumExpr::Constant(1))),
         ];
 
         // Validate we have an expected result for every input
@@ -1024,5 +1180,233 @@ mod tests {
         info!("Validating parse of {input} as an expression {expected:?}");
         let expression = parse(input).unwrap();
         assert_eq!(expression, expected);
+    }
+
+    #[test]
+    fn test_parse_byte_read_simple() {
+        init_test_logging();
+
+        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+
+        let inputs = [
+            "payload.u8[0] == 0xff",
+            "payload.be16[0] == 0x1234",
+            "payload.le16[4] != 0",
+            "payload.be32[0] >= 100",
+            "payload.le32[8] < 1000",
+            "payload.be64[0] == 0",
+            "payload.le64[16] > 0",
+        ];
+        let expected = [
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U8,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(0xff),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(0x1234),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::NotEqual,
+                NumExpr::ByteRead {
+                    offset: 4,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Little,
+                },
+                NumExpr::Constant(0),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterEqual,
+                NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U32,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(100),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::LessThan,
+                NumExpr::ByteRead {
+                    offset: 8,
+                    size: ByteReadSize::U32,
+                    endian: Endian::Little,
+                },
+                NumExpr::Constant(1000),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U64,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(0),
+            )),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::GreaterThan,
+                NumExpr::ByteRead {
+                    offset: 16,
+                    size: ByteReadSize::U64,
+                    endian: Endian::Little,
+                },
+                NumExpr::Constant(0),
+            )),
+        ];
+
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as byte read - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
+        }
+    }
+
+    #[test]
+    fn test_parse_byte_read_with_payload_len() {
+        init_test_logging();
+
+        use crate::expression::{ArithOp, ByteReadOp, ByteReadSize, Endian, NumExpr};
+
+        let input = "payload.be32[0] == payload.len - 3";
+        let expected = Clause::ByteRead(ByteReadOp::new(
+            CmpOp::Equal,
+            NumExpr::ByteRead {
+                offset: 0,
+                size: ByteReadSize::U32,
+                endian: Endian::Big,
+            },
+            NumExpr::Arith {
+                op: ArithOp::Sub,
+                lhs: Box::new(NumExpr::PayloadLen),
+                rhs: Box::new(NumExpr::Constant(3)),
+            },
+        ));
+
+        info!("Parsing '{input}' as byte read with payload.len");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, Expression::Single(expected));
+    }
+
+    #[test]
+    fn test_parse_byte_read_with_arithmetic_lhs() {
+        init_test_logging();
+
+        use crate::expression::{ArithOp, ByteReadOp, ByteReadSize, Endian, NumExpr};
+
+        let input = "payload.be16[0] + payload.be16[2] == 0xff";
+        let expected = Clause::ByteRead(ByteReadOp::new(
+            CmpOp::Equal,
+            NumExpr::Arith {
+                op: ArithOp::Add,
+                lhs: Box::new(NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Big,
+                }),
+                rhs: Box::new(NumExpr::ByteRead {
+                    offset: 2,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Big,
+                }),
+            },
+            NumExpr::Constant(0xff),
+        ));
+
+        info!("Parsing '{input}' as byte read with LHS arithmetic");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, Expression::Single(expected));
+    }
+
+    #[test]
+    fn test_parse_byte_read_two_byte_reads() {
+        init_test_logging();
+
+        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+
+        let input = "payload.be32[0] == payload.le32[4]";
+        let expected = Clause::ByteRead(ByteReadOp::new(
+            CmpOp::Equal,
+            NumExpr::ByteRead {
+                offset: 0,
+                size: ByteReadSize::U32,
+                endian: Endian::Big,
+            },
+            NumExpr::ByteRead {
+                offset: 4,
+                size: ByteReadSize::U32,
+                endian: Endian::Little,
+            },
+        ));
+
+        info!("Parsing '{input}' as two byte reads");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, Expression::Single(expected));
+    }
+
+    #[test]
+    fn test_parse_byte_read_combined_with_logic() {
+        init_test_logging();
+
+        use crate::expression::{ByteReadOp, ByteReadSize, Endian, NumExpr};
+
+        let input = "payload.be16[0] == 0x0800 and payload.u8[9] == 6";
+        let expected = Expression::And(vec![
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::ByteRead {
+                    offset: 0,
+                    size: ByteReadSize::U16,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(0x0800),
+            ))
+            .into(),
+            Clause::ByteRead(ByteReadOp::new(
+                CmpOp::Equal,
+                NumExpr::ByteRead {
+                    offset: 9,
+                    size: ByteReadSize::U8,
+                    endian: Endian::Big,
+                },
+                NumExpr::Constant(6),
+            ))
+            .into(),
+        ]);
+
+        info!("Parsing '{input}' as byte reads with logic");
+        let expression = parse(input).unwrap();
+        assert_eq!(expression, expected);
+    }
+
+    #[test]
+    fn test_parse_byte_read_failures() {
+        init_test_logging();
+
+        let inputs = [
+            "payload.be32",            // missing bracket
+            "payload.be32[",           // missing offset
+            "payload.be32[]",          // empty offset
+            "payload.be32[0",          // missing close bracket
+            "payload.be32[0]",         // missing comparison
+            "payload.be32[0] ==",      // missing RHS
+            "payload.be32[0] == abc",  // invalid number
+        ];
+
+        for input in inputs {
+            info!("Parsing '{input}' as byte read - should fail");
+            let res = parse(input);
+            assert!(res.is_err(), "Expected error for: {input}");
+        }
     }
 }

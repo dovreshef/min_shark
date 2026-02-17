@@ -155,11 +155,12 @@ mod tests {
         Expression,
         driver::ErrorKind,
         expression::{
+            ByteReadOp,
             Clause,
             CmpOp,
             EthOp,
             IpOp,
-            PayloadLenOp,
+            NumExpr,
             PayloadOp,
             ValOp,
         },
@@ -289,8 +290,8 @@ mod tests {
             .into(),
             Clause::PortSrc(ValOp::compare(CmpOp::LessThan, 1024)).into(),
             Expression::And(vec![
-                Clause::PayloadLen(PayloadLenOp::compare(CmpOp::GreaterThan, 50)).into(),
-                Clause::PayloadLen(PayloadLenOp::compare(CmpOp::LessThan, 500)).into(),
+                Clause::ByteRead(ByteReadOp::new(CmpOp::GreaterThan, NumExpr::PayloadLen, NumExpr::Constant(50))).into(),
+                Clause::ByteRead(ByteReadOp::new(CmpOp::LessThan, NumExpr::PayloadLen, NumExpr::Constant(500))).into(),
             ]),
             Clause::Payload(PayloadOp::regex_match(
                 Regex::new("GET /secret").unwrap().into(),
@@ -503,7 +504,7 @@ mod tests {
             "expected a value operation found end of input",
             "expected a value operation found end of input",
             "expected a payload operation found end of input",
-            "expected a payload length operation found end of input",
+            "expected comparison operator found end of input",
         ];
 
         assert_eq!(inputs.len(), error_messages.len());
@@ -522,5 +523,102 @@ mod tests {
         let err = parse(input).unwrap_err();
 
         assert_eq!(err.message(), "expected end of input found \"boom\"");
+    }
+
+    #[test]
+    fn test_byte_read_e2e_parse_and_match() {
+        init_test_logging();
+
+        // Parse the expression
+        let expr = parse("payload.be16[0] == 0x0800 and payload.u8[9] == 6").unwrap();
+
+        // Match against a payload: EtherType 0x0800 (IPv4) at offset 0, protocol 6 (TCP) at offset 9
+        let mut payload = vec![0u8; 20];
+        payload[0] = 0x08;
+        payload[1] = 0x00;
+        payload[9] = 6;
+
+        assert!(expr.matcher().payload(&payload).is_match());
+
+        // Wrong protocol
+        payload[9] = 17; // UDP
+        assert!(!expr.matcher().payload(&payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_e2e_arithmetic() {
+        init_test_logging();
+
+        // payload.be32[0] == payload.len - 4
+        let expr = parse("payload.be32[0] == payload.len - 4").unwrap();
+
+        // Payload is 20 bytes, first 4 bytes encode 16 (= 20 - 4)
+        let mut payload = vec![0u8; 20];
+        payload[0] = 0;
+        payload[1] = 0;
+        payload[2] = 0;
+        payload[3] = 16;
+
+        assert!(expr.matcher().payload(&payload).is_match());
+
+        // Wrong value
+        payload[3] = 15;
+        assert!(!expr.matcher().payload(&payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_e2e_combined_with_existing() {
+        init_test_logging();
+
+        let expr =
+            parse("tcp and payload.be16[0] == 0x1234 and payload.len > 2").unwrap();
+
+        let payload = &[0x12, 0x34, 0x56];
+        assert!(expr.matcher().tcp(true).payload(payload).is_match());
+        assert!(!expr.matcher().tcp(false).payload(payload).is_match());
+        assert!(!expr.matcher().tcp(true).payload(&[0x12]).is_match()); // too short
+    }
+
+    #[test]
+    fn test_payload_len_arithmetic_e2e() {
+        init_test_logging();
+
+        // payload.len - 4 == payload.be32[0] and payload.be16[4] + 1 == payload.len
+        // With a 16-byte payload:
+        //   be32[0] = 12 → payload.len(16) - 4 = 12 ✓
+        //   be16[4] = 15 → 15 + 1 = 16 = payload.len ✓
+        let expr = parse(
+            "payload.len - 4 == payload.be32[0] and payload.be16[4] + 1 == payload.len",
+        )
+        .unwrap();
+
+        let mut payload = vec![0u8; 16];
+        payload[3] = 12; // be32[0] = 12
+        payload[4] = 0;
+        payload[5] = 15; // be16[4] = 15
+        assert!(expr.matcher().payload(&payload).is_match());
+
+        // Wrong be32[0]: 11 → 16 - 4 = 12 != 11
+        payload[3] = 11;
+        assert!(!expr.matcher().payload(&payload).is_match());
+
+        // Fix be32[0], break be16[4]: 14 + 1 = 15 != 16
+        payload[3] = 12;
+        payload[5] = 14;
+        assert!(!expr.matcher().payload(&payload).is_match());
+    }
+
+    #[test]
+    fn test_byte_read_e2e_error_messages() {
+        init_test_logging();
+
+        let err = parse("payload.be32").unwrap_err();
+        assert_eq!(err.message(), "expected [ found end of input");
+
+        let err = parse("payload.be32[0]").unwrap_err();
+        assert_eq!(
+            err.message(),
+            "expected comparison operator found end of input"
+        );
     }
 }

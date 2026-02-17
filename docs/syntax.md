@@ -18,6 +18,13 @@
 * dstport:       number | list(number)
 * payload:       byte-string | regex
 * payload.len:   number | list(number)
+* payload.u8:    byte-read (1 byte)
+* payload.be16:  byte-read (2 bytes, big-endian)
+* payload.le16:  byte-read (2 bytes, little-endian)
+* payload.be32:  byte-read (4 bytes, big-endian)
+* payload.le32:  byte-read (4 bytes, little-endian)
+* payload.be64:  byte-read (8 bytes, big-endian)
+* payload.le64:  byte-read (8 bytes, little-endian)
 
 ## Type explanation
     
@@ -95,6 +102,42 @@ Example:
 * 'payload ~ "GET /(secret|password)"'
 * 'payload ~ "[[:ascii:]]{100}"' // matches any payload that has a 100 ascii characters in a row
 * 'payload ~ "^\x00BOOM\x00"' // matches any payload that starts with null followed by BOOM followed by null  
+
+### byte-read (numeric)
+
+Read raw bytes from the payload as integers and compare them. Supports big-endian and little-endian byte order.
+
+Available fields:
+* payload.u8[offset]:    1 byte (no endianness)
+* payload.be16[offset]:  2 bytes, big-endian
+* payload.le16[offset]:  2 bytes, little-endian
+* payload.be32[offset]:  4 bytes, big-endian
+* payload.le32[offset]:  4 bytes, little-endian
+* payload.be64[offset]:  8 bytes, big-endian
+* payload.le64[offset]:  8 bytes, little-endian
+
+The offset is a decimal byte offset from the start of the payload.
+
+Both sides of the comparison support arithmetic expressions with `+` and `-`, and can reference `payload.len`, constants (decimal or `0x` hex), or other byte reads.
+
+Example:
+* 'payload.u8[0] == 0xff'
+* 'payload.be16[0] == 0x0800'
+* 'payload.le32[4] >= 100'
+* 'payload.be32[0] == payload.len - 4'
+* 'payload.be16[0] + payload.be16[2] == payload.le32[4]'
+* 'payload.be16[0] == 0x0800 and payload.u8[9] == 6'
+
+Common protocol header sizes useful for offset calculations:
+* TCP header (minimum): 20 bytes
+* UDP header: 8 bytes
+* IPv4 header (minimum): 20 bytes
+
+Example with header offsets:
+* 'payload.be16[2] == payload.len + 20' # TCP length field equals payload length plus TCP header size
+* 'payload.be16[4] == payload.len + 8' # UDP length field equals payload length plus UDP header size
+
+If the byte read is out of bounds (offset + size > payload length), the clause evaluates to false.
 
 ## Operations
 
