@@ -8,10 +8,35 @@ use ipnet::IpNet;
 use regex::bytes::Regex;
 use std::net::IpAddr;
 
-/// Parse a given string as a u16
+/// Parse a given string as a u32
 pub(crate) fn parse_u32(val: &BStr) -> Result<u32, &'static str> {
     let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
     val.parse().map_err(|_| "not a valid number")
+}
+
+/// Parse a given string as a u64, supporting decimal and hex (0x) literals.
+/// Underscores are allowed as visual separators.
+pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
+    let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
+    // Strip underscores for visual separator support (e.g., 1_000_000)
+    let stripped: String;
+    let val = if val.contains('_') {
+        stripped = val.replace('_', "");
+        &stripped
+    } else {
+        val
+    };
+    if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
+        u64::from_str_radix(hex, 16).map_err(|_| "not a valid hex number")
+    } else {
+        val.parse().map_err(|_| "not a valid number")
+    }
+}
+
+/// Parse a given string as a u16 (decimal only, for byte-read offsets)
+pub(crate) fn parse_u16_decimal(val: &BStr) -> Result<u16, &'static str> {
+    let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
+    val.parse().map_err(|_| "not a valid offset")
 }
 
 /// Parse a given string as a mac-address
@@ -203,7 +228,9 @@ mod tests {
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
+        parse_u16_decimal,
         parse_u32,
+        parse_u64,
     };
     use crate::{
         mac_addr::MacAddr,
@@ -440,6 +467,70 @@ mod tests {
             let val = val.into();
             info!("Parsing \"{val}\" as ip - should fail");
             let res = parse_ip_net(val);
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_parse_u64() {
+        init_test_logging();
+
+        // Decimal
+        for (val, expected) in [
+            ("0", 0u64),
+            ("1", 1),
+            ("255", 255),
+            ("65535", 65535),
+            ("4294967295", 4294967295),
+            ("18446744073709551615", u64::MAX),
+        ] {
+            info!("Parsing \"{val}\" as u64 - should succeed");
+            let num = parse_u64(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Hex
+        for (val, expected) in [
+            ("0xff", 255u64),
+            ("0xFF", 255),
+            ("0x0", 0),
+            ("0x1234", 0x1234),
+            ("0xDEADBEEF", 0xDEADBEEF),
+            ("0Xff", 255),
+        ] {
+            info!("Parsing \"{val}\" as u64 hex - should succeed");
+            let num = parse_u64(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Underscores
+        for (val, expected) in [("1_000", 1000u64), ("0xff_ff", 0xffff), ("1_2_3", 123)] {
+            info!("Parsing \"{val}\" as u64 with underscores - should succeed");
+            let num = parse_u64(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Failures
+        for val in ["", "abc", "0x", "0xGG", "-1", "not_a_number"] {
+            info!("Parsing \"{val}\" as u64 - should fail");
+            let res = parse_u64(val.into());
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_parse_u16_decimal() {
+        init_test_logging();
+
+        for (val, expected) in [("0", 0u16), ("1", 1), ("65535", u16::MAX)] {
+            info!("Parsing \"{val}\" as u16 decimal - should succeed");
+            let num = parse_u16_decimal(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        for val in ["", "65536", "abc", "-1"] {
+            info!("Parsing \"{val}\" as u16 decimal - should fail");
+            let res = parse_u16_decimal(val.into());
             assert!(res.is_err());
         }
     }
