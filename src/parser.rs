@@ -30,6 +30,7 @@ use crate::{
         parse_regex,
         parse_u16_decimal,
         parse_u32,
+        parse_u32_hex_or_dec,
         parse_u64,
     },
 };
@@ -270,9 +271,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_value_operations(&mut self) -> Result<ValOp, ErrorKind> {
+        self.parse_value_operations_with(&parse_u32)
+    }
+
+    /// Like [`Self::parse_value_operations`] but with a caller-supplied numeric
+    /// value parser, so fields commonly written in hex (e.g. `eth.type`) can
+    /// accept `0x`-prefixed literals via [`parse_u32_hex_or_dec`].
+    fn parse_value_operations_with<F, E>(&mut self, value_parser: &F) -> Result<ValOp, ErrorKind>
+    where
+        F: Fn(&BStr) -> Result<u32, E>,
+        E: Into<String>,
+    {
         let val_op = match self.parse_comparison_operator() {
             Ok(cmp_op) => {
-                let num = self.parse_value(TokenKind::Value, &parse_u32, "number")?;
+                let num = self.parse_value(TokenKind::Value, value_parser, "number")?;
                 ValOp::compare(cmp_op, num)
             }
             _ => match self.current.kind {
@@ -286,13 +298,13 @@ impl<'a> Parser<'a> {
                     }
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, value_parser, "list of numbers")?;
                     ValOp::match_none(values)
                 }
                 TokenKind::In => {
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, value_parser, "list of numbers")?;
                     ValOp::match_any(values)
                 }
                 _ => {
@@ -524,6 +536,11 @@ impl<'a> Parser<'a> {
             TokenKind::LitEthSrc => {
                 self.advance();
                 self.parse_ethernet_operations().map(Clause::EthSrc)?
+            }
+            TokenKind::LitEthType => {
+                self.advance();
+                self.parse_value_operations_with(&parse_u32_hex_or_dec)
+                    .map(Clause::EthType)?
             }
             TokenKind::LitIpAddr => {
                 self.advance();
@@ -835,6 +852,54 @@ mod tests {
             info!("Parsing '{input}' as a value operations - should succeed");
             let expression = parse(input).unwrap();
             assert_eq!(expression, Expression::Single(clause));
+        }
+    }
+
+    #[test]
+    fn test_parse_eth_type_success() {
+        init_test_logging();
+
+        // eth.type accepts hex (0x) and decimal literals, comparisons and lists.
+        let inputs = [
+            "eth.type == 0x88a4",
+            "eth.type == 0x0800",
+            "eth.type != 0x88a4",
+            "eth.type == 2048",
+            "eth.type in {0x0800, 0x86dd}",
+            "eth.type not in {0x0800, 0x86dd}",
+        ];
+        let expected = [
+            Clause::EthType(ValOp::compare(CmpOp::Equal, 0x88a4)),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, 0x0800)),
+            Clause::EthType(ValOp::compare(CmpOp::NotEqual, 0x88a4)),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, 2048)),
+            Clause::EthType(ValOp::match_any(vec![0x0800, 0x86dd])),
+            Clause::EthType(ValOp::match_none(vec![0x0800, 0x86dd])),
+        ];
+
+        assert_eq!(inputs.len(), expected.len());
+
+        for (input, clause) in inputs.into_iter().zip(expected) {
+            info!("Parsing '{input}' as an eth.type operation - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(clause));
+        }
+    }
+
+    #[test]
+    fn test_parse_eth_type_failure() {
+        init_test_logging();
+
+        let inputs = [
+            "eth.type == not-a-number",
+            "eth.type == 0xzz",
+            r#"eth.type == "0x88a4""#,
+            "eth.type in 0x88a4",
+        ];
+
+        for input in inputs {
+            info!("Parsing '{input}' as an eth.type operation - should fail");
+            assert!(parse(input).is_err());
         }
     }
 

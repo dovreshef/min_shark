@@ -24,6 +24,9 @@ pub(crate) enum TokenKind {
     /// Literal `eth.src`
     #[display("eth.src")]
     LitEthSrc,
+    /// Literal `eth.type`
+    #[display("eth.type")]
+    LitEthType,
     /// Literal `ip.addr`
     #[display("ip.addr")]
     LitIpAddr,
@@ -235,6 +238,7 @@ impl<'a> Lexer<'a> {
             "eth.addr" => TokenKind::LitEthAddr,
             "eth.dst" => TokenKind::LitEthDst,
             "eth.src" => TokenKind::LitEthSrc,
+            "eth.type" => TokenKind::LitEthType,
             "ip.addr" => TokenKind::LitIpAddr,
             "ip.dst" => TokenKind::LitIpDst,
             "ip.src" => TokenKind::LitIpSrc,
@@ -465,12 +469,9 @@ mod tests {
         init_test_logging();
 
         let inputs = ["tcp", "udp", "vlan", "arp"];
-        let expected = &[
-            [(LitTcp, "tcp")],
-            [(LitUdp, "udp")],
-            [(LitVlan, "vlan")],
-            [(LitArp, "arp")],
-        ];
+        let expected = &[[(LitTcp, "tcp")], [(LitUdp, "udp")], [(LitVlan, "vlan")], [
+            (LitArp, "arp"),
+        ]];
         for (input, expected) in inputs.into_iter().zip(expected) {
             compare_input_tokens(input, expected);
         }
@@ -485,6 +486,7 @@ mod tests {
             "eth.addr == 00-B0-D0-63-C2-26",
             "eth.src != 00-B0-D0-63-C2-26",
             "eth.dst eq 00-B0-D0-63-C2-26",
+            "eth.type == 0x88a4",
             "ip.addr == 1.2.3.4",
             "ip.src == 1.2.3.4",
             "ip.dst == 1.2.3.4",
@@ -511,6 +513,7 @@ mod tests {
                 (Equal, "eq"),
                 (Value, "00-B0-D0-63-C2-26"),
             ],
+            vec![(LitEthType, "eth.type"), (Equal, "=="), (Value, "0x88a4")],
             vec![(LitIpAddr, "ip.addr"), (Equal, "=="), (Value, "1.2.3.4")],
             vec![(LitIpSrc, "ip.src"), (Equal, "=="), (Value, "1.2.3.4")],
             vec![(LitIpDst, "ip.dst"), (Equal, "=="), (Value, "1.2.3.4")],

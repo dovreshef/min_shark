@@ -9,6 +9,7 @@
 * eth.addr:      byte-string | regex
 * eth.dst:       byte-string | regex
 * eth.src:       byte-string | regex
+* eth.type:      number | list(number)
 * ip.addr:       ip | net | list(ip | net)
 * ip.dst:        ip | net | list(ip | net)
 * ip.src:        ip | net | list(ip | net)
@@ -83,12 +84,15 @@ Example:
  
 ### number
 
-A whole non-negative number without fractions
+A whole non-negative number without fractions. `eth.type` additionally accepts
+`0x`-prefixed hex literals (e.g. `0x88a4`), which is the usual way to write ethertypes.
 
 Example:
 * 'srcport in {22, 80}'
 * 'srcport < 1024'
 * 'payload.len > 50 and payload.len < 500'
+* 'eth.type == 0x88a4'                 // EtherCAT
+* 'eth.type in {0x0800, 0x86dd}'       // IPv4 or IPv6
   
 ### regex
 
