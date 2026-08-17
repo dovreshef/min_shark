@@ -250,6 +250,7 @@ mod tests {
         parse_regex,
         parse_u16_decimal,
         parse_u32,
+        parse_u32_hex_or_dec,
         parse_u64,
     };
     use crate::{
@@ -280,6 +281,58 @@ mod tests {
             let val = val.into();
             info!("Parsing \"{val}\" as u16 - should fail");
             let res = parse_u32(val);
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_parse_u32_hex_or_dec() {
+        init_test_logging();
+
+        // Decimal
+        for (val, expected) in [
+            ("0", 0u32),
+            ("1", 1),
+            ("65535", 65535),
+            ("4294967295", u32::MAX),
+        ] {
+            info!("Parsing \"{val}\" as u32 hex-or-dec - should succeed");
+            let num = parse_u32_hex_or_dec(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Hex
+        for (val, expected) in [
+            ("0x88a4", 0x88a4u32),
+            ("0X88A4", 0x88a4),
+            ("0x0", 0),
+            ("0xFFFFFFFF", u32::MAX),
+        ] {
+            info!("Parsing \"{val}\" as u32 hex-or-dec - should succeed");
+            let num = parse_u32_hex_or_dec(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Underscores
+        for (val, expected) in [("1_000", 1000u32), ("0x88_a4", 0x88a4), ("1_2_3", 123)] {
+            info!("Parsing \"{val}\" as u32 hex-or-dec with underscores - should succeed");
+            let num = parse_u32_hex_or_dec(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Failures
+        for val in [
+            "",
+            "abc",
+            "0x",
+            "0xGG",
+            "-1",
+            "not_a_number",
+            "0x100000000",
+            "4294967296",
+        ] {
+            info!("Parsing \"{val}\" as u32 hex-or-dec - should fail");
+            let res = parse_u32_hex_or_dec(val.into());
             assert!(res.is_err());
         }
     }

@@ -706,8 +706,7 @@ impl<'p> Matcher<'_, 'p> {
         self
     }
 
-    /// The Ethernet ethertype of the packet (the effective ethertype, i.e. the
-    /// one identifying the L3 payload after any VLAN/tag unwrapping).
+    /// The Ethernet ethertype of the packet
     pub fn eth_type(mut self, val: u16) -> Self {
         self.eth_type = Some(val);
         self
