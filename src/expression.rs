@@ -768,11 +768,21 @@ impl<'p> Matcher<'_, 'p> {
 }
 
 #[cfg(test)]
+pub(crate) const ETHERTYPE_IPV4: u32 = 0x0800;
+#[cfg(test)]
+pub(crate) const ETHERTYPE_IPV6: u32 = 0x86dd;
+#[cfg(test)]
+pub(crate) const ETHERTYPE_ETHERCAT: u32 = 0x88a4;
+
+#[cfg(test)]
 mod tests {
     use super::{
         ByteReadOp,
         Clause,
         CmpOp,
+        ETHERTYPE_ETHERCAT,
+        ETHERTYPE_IPV4,
+        ETHERTYPE_IPV6,
         EthOp,
         Expression,
         IpOp,
@@ -1040,12 +1050,12 @@ mod tests {
     fn test_single_clause_eth_type_expressions() {
         init_test_logging();
 
-        let eth_type: u16 = 0x88a4; // EtherCAT
+        let eth_type = ETHERTYPE_ETHERCAT as u16;
         let matching = [
-            Clause::EthType(ValOp::compare(CmpOp::Equal, eth_type.into())),
-            Clause::EthType(ValOp::compare(CmpOp::NotEqual, 0x0800)),
-            Clause::EthType(ValOp::match_any(vec![0x0800, eth_type.into()])),
-            Clause::EthType(ValOp::match_none(vec![0x0800, 0x86dd])),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
+            Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_ETHERCAT])),
+            Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
         ];
         for clause in matching.into_iter() {
             let expression = Expression::from(clause);
@@ -1053,10 +1063,9 @@ mod tests {
             assert!(expression.matcher().eth_type(eth_type).is_match());
         }
 
-        // Non-matching cases
         let not_matching = [
-            Clause::EthType(ValOp::compare(CmpOp::Equal, 0x0800)),
-            Clause::EthType(ValOp::match_any(vec![0x0800, 0x86dd])),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
         ];
         for clause in not_matching.into_iter() {
             let expression = Expression::from(clause);
@@ -1064,8 +1073,11 @@ mod tests {
             assert!(!expression.matcher().eth_type(eth_type).is_match());
         }
 
-        // When the matcher has no ethertype set, the clause is false (not a panic).
-        let expression = Expression::from(Clause::EthType(ValOp::compare(CmpOp::Equal, 0x88a4)));
+        // No eth_type set on the matcher: false, not a panic.
+        let expression = Expression::from(Clause::EthType(ValOp::compare(
+            CmpOp::Equal,
+            ETHERTYPE_ETHERCAT,
+        )));
         assert!(!expression.matcher().is_match());
     }
 

@@ -34,8 +34,7 @@ pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
 }
 
 /// Parse a given string as a u32, supporting decimal and hex (0x) literals.
-/// Underscores are allowed as visual separators. Useful for fields commonly
-/// written in hex, such as the Ethernet ethertype (e.g. `0x88a4`).
+/// Underscores are allowed as visual separators.
 pub(crate) fn parse_u32_hex_or_dec(val: &BStr) -> Result<u32, &'static str> {
     let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
     // Strip underscores for visual separator support (e.g., 0x88_a4)
@@ -320,7 +319,7 @@ mod tests {
             assert_eq!(num, expected);
         }
 
-        // Failures
+        // Failures: empty/garbage/malformed hex/negative, plus u32::MAX + 1 in hex and decimal
         for val in [
             "",
             "abc",

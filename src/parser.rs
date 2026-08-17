@@ -274,9 +274,7 @@ impl<'a> Parser<'a> {
         self.parse_value_operations_with(&parse_u32)
     }
 
-    /// Like [`Self::parse_value_operations`] but with a caller-supplied numeric
-    /// value parser, so fields commonly written in hex (e.g. `eth.type`) can
-    /// accept `0x`-prefixed literals via [`parse_u32_hex_or_dec`].
+    /// Like [`Self::parse_value_operations`] but with a caller-supplied numeric value parser.
     fn parse_value_operations_with<F, E>(&mut self, value_parser: &F) -> Result<ValOp, ErrorKind>
     where
         F: Fn(&BStr) -> Result<u32, E>,
@@ -662,6 +660,9 @@ mod tests {
             ByteReadOp,
             Clause,
             CmpOp,
+            ETHERTYPE_ETHERCAT,
+            ETHERTYPE_IPV4,
+            ETHERTYPE_IPV6,
             EthOp,
             IpOp,
             NumExpr,
@@ -859,7 +860,6 @@ mod tests {
     fn test_parse_eth_type_success() {
         init_test_logging();
 
-        // eth.type accepts hex (0x) and decimal literals, comparisons and lists.
         let inputs = [
             "eth.type == 0x88a4",
             "eth.type == 0x0800",
@@ -869,12 +869,12 @@ mod tests {
             "eth.type not in {0x0800, 0x86dd}",
         ];
         let expected = [
-            Clause::EthType(ValOp::compare(CmpOp::Equal, 0x88a4)),
-            Clause::EthType(ValOp::compare(CmpOp::Equal, 0x0800)),
-            Clause::EthType(ValOp::compare(CmpOp::NotEqual, 0x88a4)),
-            Clause::EthType(ValOp::compare(CmpOp::Equal, 2048)),
-            Clause::EthType(ValOp::match_any(vec![0x0800, 0x86dd])),
-            Clause::EthType(ValOp::match_none(vec![0x0800, 0x86dd])),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT)),
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+            Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
         ];
 
         assert_eq!(inputs.len(), expected.len());
