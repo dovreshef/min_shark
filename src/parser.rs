@@ -860,29 +860,19 @@ mod tests {
     fn test_parse_eth_type_success() {
         init_test_logging();
 
-        let inputs = [
-            "eth.type == 0x88a4",
-            "eth.type == 0x0800",
-            "eth.type != 0x88a4",
-            "eth.type == 2048",
-            "eth.type in {0x0800, 0x86dd}",
-            "eth.type not in {0x0800, 0x86dd}",
-        ];
-        let expected = [
-            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
-            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
-            Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT)),
-            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
-            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
-            Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+        let cases = [
+            ("eth.type == 0x88a4", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT))),
+            ("eth.type == 0x0800", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4))),
+            ("eth.type != 0x88a4", Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT))),
+            ("eth.type == 2048", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4))),
+            ("eth.type in {0x0800, 0x86dd}", Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6]))),
+            ("eth.type not in {0x0800, 0x86dd}", Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6]))),
         ];
 
-        assert_eq!(inputs.len(), expected.len());
-
-        for (input, clause) in inputs.into_iter().zip(expected) {
+        for (input, expected_clause) in cases {
             info!("Parsing '{input}' as an eth.type operation - should succeed");
             let expression = parse(input).unwrap();
-            assert_eq!(expression, Expression::Single(clause));
+            assert_eq!(expression, Expression::Single(expected_clause));
         }
     }
 
