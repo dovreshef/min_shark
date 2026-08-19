@@ -861,12 +861,30 @@ mod tests {
         init_test_logging();
 
         let cases = [
-            ("eth.type == 0x88a4", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT))),
-            ("eth.type == 0x0800", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4))),
-            ("eth.type != 0x88a4", Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT))),
-            ("eth.type == 2048", Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4))),
-            ("eth.type in {0x0800, 0x86dd}", Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6]))),
-            ("eth.type not in {0x0800, 0x86dd}", Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6]))),
+            (
+                "eth.type == 0x88a4",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
+            ),
+            (
+                "eth.type == 0x0800",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            ),
+            (
+                "eth.type != 0x88a4",
+                Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT)),
+            ),
+            (
+                "eth.type == 2048",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            ),
+            (
+                "eth.type in {0x0800, 0x86dd}",
+                Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+            ),
+            (
+                "eth.type not in {0x0800, 0x86dd}",
+                Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+            ),
         ];
 
         for (input, expected_clause) in cases {
