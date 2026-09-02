@@ -33,23 +33,14 @@ pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
     }
 }
 
-/// Parse a given string as a u32, supporting decimal and hex (0x) literals.
+/// Parse a given string as a u16 EtherType, supporting decimal and hex (0x) literals.
+/// Rejects values above 0xffff (u16::MAX).
 /// Underscores are allowed as visual separators.
-pub(crate) fn parse_u32_hex_or_dec(val: &BStr) -> Result<u32, &'static str> {
-    let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
-    // Strip underscores for visual separator support (e.g., 0x88_a4)
-    let stripped: String;
-    let val = if val.contains('_') {
-        stripped = val.replace('_', "");
-        &stripped
-    } else {
-        val
-    };
-    if let Some(hex) = val.strip_prefix("0x").or_else(|| val.strip_prefix("0X")) {
-        u32::from_str_radix(hex, 16).map_err(|_| "not a valid hex number")
-    } else {
-        val.parse().map_err(|_| "not a valid number")
-    }
+pub(crate) fn parse_ethertype(val: &BStr) -> Result<u32, &'static str> {
+    let n = parse_u64(val)?;
+    u16::try_from(n)
+        .map(u32::from)
+        .map_err(|_| "EtherType value out of range (must be 0x0000–0xffff)")
 }
 
 /// Parse a given string as a u16 (decimal only, for byte-read offsets)
@@ -244,12 +235,12 @@ mod tests {
         parse_ascii_byte,
         parse_byte_string,
         parse_escaped_byte_string,
+        parse_ethertype,
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
         parse_u16_decimal,
         parse_u32,
-        parse_u32_hex_or_dec,
         parse_u64,
     };
     use crate::{
@@ -285,54 +276,32 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_u32_hex_or_dec() {
+    fn test_parse_ethertype() {
         init_test_logging();
 
-        // Decimal
+        // Valid EtherType values
         for (val, expected) in [
             ("0", 0u32),
-            ("1", 1),
+            ("0x0800", 0x0800),
+            ("0x86dd", 0x86dd),
+            ("0xffff", 0xffff),
             ("65535", 65535),
-            ("4294967295", u32::MAX),
         ] {
-            info!("Parsing \"{val}\" as u32 hex-or-dec - should succeed");
-            let num = parse_u32_hex_or_dec(val.into()).unwrap();
+            info!("Parsing \"{val}\" as EtherType - should succeed");
+            let num = parse_ethertype(val.into()).unwrap();
             assert_eq!(num, expected);
         }
 
-        // Hex
-        for (val, expected) in [
-            ("0x88a4", 0x88a4u32),
-            ("0X88A4", 0x88a4),
-            ("0x0", 0),
-            ("0xFFFFFFFF", u32::MAX),
-        ] {
-            info!("Parsing \"{val}\" as u32 hex-or-dec - should succeed");
-            let num = parse_u32_hex_or_dec(val.into()).unwrap();
-            assert_eq!(num, expected);
+        // Out-of-range: values above u16::MAX must fail
+        for val in ["65536", "0x10000", "4294967295", "0xffffffff"] {
+            info!("Parsing \"{val}\" as EtherType - should fail (out of range)");
+            assert!(parse_ethertype(val.into()).is_err());
         }
 
-        // Underscores
-        for (val, expected) in [("1_000", 1000u32), ("0x88_a4", 0x88a4), ("1_2_3", 123)] {
-            info!("Parsing \"{val}\" as u32 hex-or-dec with underscores - should succeed");
-            let num = parse_u32_hex_or_dec(val.into()).unwrap();
-            assert_eq!(num, expected);
-        }
-
-        // Failures: empty/garbage/malformed hex/negative, plus u32::MAX + 1 in hex and decimal
-        for val in [
-            "",
-            "abc",
-            "0x",
-            "0xGG",
-            "-1",
-            "not_a_number",
-            "0x100000000",
-            "4294967296",
-        ] {
-            info!("Parsing \"{val}\" as u32 hex-or-dec - should fail");
-            let res = parse_u32_hex_or_dec(val.into());
-            assert!(res.is_err());
+        // Malformed inputs must fail
+        for val in ["", "abc", "0x", "-1"] {
+            info!("Parsing \"{val}\" as EtherType - should fail (malformed)");
+            assert!(parse_ethertype(val.into()).is_err());
         }
     }
 

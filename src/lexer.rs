@@ -469,9 +469,12 @@ mod tests {
         init_test_logging();
 
         let inputs = ["tcp", "udp", "vlan", "arp"];
-        let expected = &[[(LitTcp, "tcp")], [(LitUdp, "udp")], [(LitVlan, "vlan")], [
-            (LitArp, "arp"),
-        ]];
+        let expected = &[
+            [(LitTcp, "tcp")],
+            [(LitUdp, "udp")],
+            [(LitVlan, "vlan")],
+            [(LitArp, "arp")],
+        ];
         for (input, expected) in inputs.into_iter().zip(expected) {
             compare_input_tokens(input, expected);
         }

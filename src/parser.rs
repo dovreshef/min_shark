@@ -25,12 +25,12 @@ use crate::{
     value_parsers::{
         parse_byte_string,
         parse_escaped_byte_string,
+        parse_ethertype,
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
         parse_u16_decimal,
         parse_u32,
-        parse_u32_hex_or_dec,
         parse_u64,
     },
 };
@@ -537,7 +537,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LitEthType => {
                 self.advance();
-                self.parse_value_operations_with(&parse_u32_hex_or_dec)
+                self.parse_value_operations_with(&parse_ethertype)
                     .map(Clause::EthType)?
             }
             TokenKind::LitIpAddr => {
@@ -903,6 +903,9 @@ mod tests {
             "eth.type == 0xzz",
             r#"eth.type == "0x88a4""#,
             "eth.type in 0x88a4",
+            "eth.type == 65536",
+            "eth.type == 0x10000",
+            "eth.type in {0x0800, 0x10000}",
         ];
 
         for input in inputs {
