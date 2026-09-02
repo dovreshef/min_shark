@@ -71,7 +71,7 @@ impl std::error::Error for ParseError {}
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "error: {}", self.message())?;
-        writeln!(f, "filter: \"{}\"", &self.input)?;
+        writeln!(f, "filter: \"{}\"", self.input)?;
         let span = self.error_span();
         let start = usize::from(span.0);
         let end = usize::from(span.1);

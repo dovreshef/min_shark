@@ -69,24 +69,21 @@ pub fn parse_regex(val: &BStr) -> Result<RegexMatcher, String> {
 fn parse_ascii_byte(n1: u8, n2: u8) -> Result<u8, &'static str> {
     let mut byte = 0;
     for n in [n1, n2] {
-        let nibble;
         // 0-9
-        if n > 47 && n < 58 {
+        let nibble = if n > 47 && n < 58 {
             // The letter "0" is in the ASCII table at position 48
-            nibble = n - 48;
-        }
+            n - 48
         // A-F
-        else if n > 64 && n < 71 {
+        } else if n > 64 && n < 71 {
             // The letter "A" (dec 10) in the ASCII table at position 65
-            nibble = n - 55;
-        }
+            n - 55
         // a-f
-        else if n > 96 && n < 103 {
+        } else if n > 96 && n < 103 {
             // The letter "a" (dec 10) in the ASCII table at position 97
-            nibble = n - 87;
+            n - 87
         } else {
             return Err("not a valid ascii hex character");
-        }
+        };
         byte <<= 4;
         byte |= nibble;
     }
@@ -108,8 +105,8 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 3 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.chunks_exact(3) {
-                if ![b':', b'-'].contains(&group[0]) {
+            for group in rest.as_chunks::<3>().0 {
+                if !b":-".contains(&group[0]) {
                     return Err("invalid byte-string separator");
                 }
                 let byte = parse_ascii_byte(group[1], group[2])?;
@@ -120,7 +117,7 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 2 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.chunks_exact(2) {
+            for group in rest.as_chunks::<2>().0 {
                 let byte = parse_ascii_byte(group[0], group[1])?;
                 bytes.push(byte);
             }
