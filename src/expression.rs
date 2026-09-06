@@ -706,7 +706,17 @@ impl<'p> Matcher<'_, 'p> {
         self
     }
 
-    /// The Ethernet ethertype of the packet
+    /// The Ethernet EtherType of the packet (the 2-byte field after the MAC addresses).
+    ///
+    /// Pass the EtherType that is relevant to your matching context:
+    /// - Untagged frames: pass the outer EtherType directly.
+    /// - 802.1Q VLAN frames: outer EtherType is `0x8100`; pass the inner EtherType if you
+    ///   want to match on the encapsulated protocol.
+    /// - 802.3 length-field frames (field value ≤ 1500): omit this call; an unset field
+    ///   evaluates to false, which is the safe default.
+    ///
+    /// If this method is not called, any `eth.type` clause evaluates to false.
+    /// Negating such a clause (e.g. `not eth.type == X`) therefore evaluates to true.
     pub fn eth_type(mut self, val: u16) -> Self {
         self.eth_type = Some(val);
         self

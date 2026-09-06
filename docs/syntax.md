@@ -86,6 +86,8 @@ Example:
 
 A whole non-negative number without fractions. `eth.type` additionally accepts
 `0x`-prefixed hex literals (e.g. `0x88a4`), which is the usual way to write ethertypes.
+Underscores may be used as visual separators between digits (e.g. `1_000`, `0xff_ff`),
+but not at the start or end of the digit sequence, and not doubled (`1__2`).
 
 Example:
 * 'srcport in {22, 80}'
@@ -166,4 +168,29 @@ Examples:
 * 'payload.len > 50'
 * 'payload ~ "(ASCII|\x22\x12)"'
 * 'payload ~ "(?i)CaSeInSeNsItIvE"' # case insensitive match
+
+## Field semantics
+
+### Missing fields
+
+If the caller does not supply a field value on the `Matcher` (e.g. never calls `.eth_type(...)`),
+any clause that references that field evaluates to **false**. Negating such a clause with `not`
+therefore evaluates to **true**. This is consistent across all fields — a clause can only match
+data that was actually provided.
+
+### eth.type — VLAN and QinQ frames
+
+`eth.type` matches the value the caller passes to `Matcher::eth_type`. The library does not
+parse raw frames; it is the caller's responsibility to decide which EtherType value to supply:
+
+* **Untagged frames**: pass the outer EtherType directly (e.g. `0x0800` for IPv4).
+* **IEEE 802.1Q (VLAN)**: the outer EtherType field is `0x8100` (TPID). To match on the
+  encapsulated protocol, the caller must strip the VLAN tag and pass the inner EtherType.
+  To match on "frame is VLAN-tagged", write `eth.type == 0x8100`.
+* **QinQ (802.1ad)**: outer TPID is `0x88a8`. Same principle applies — pass whichever
+  layer's EtherType is meaningful for the use case.
+* **IEEE 802.3 length-field frames**: when the two-byte field carries a frame length (value
+  ≤ 1500) rather than an EtherType (value ≥ 1536), callers should omit `.eth_type()` on
+  the matcher. The `eth.type` clause will evaluate to false (no match), which is the safe
+  default.
   

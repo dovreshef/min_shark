@@ -15,14 +15,23 @@ pub(crate) fn parse_u32(val: &BStr) -> Result<u32, &'static str> {
 }
 
 /// Parse a given string as a u64, supporting decimal and hex (0x) literals.
-/// Underscores are allowed as visual separators.
+/// Underscores are allowed as visual separators between digits (e.g. `1_000`, `0xff_ff`),
+/// but not at the start or end of the digit sequence, and not doubled (`1__2`).
 pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
     let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
-    // Strip underscores for visual separator support (e.g., 1_000_000)
-    let stripped: String;
+    let owned;
     let val = if val.contains('_') {
-        stripped = val.replace('_', "");
-        &stripped
+        // Underscores are separators: every segment between them must be non-empty.
+        // Stripping the 0x prefix first ensures "0x_1" → digits "_1" → leading empty segment.
+        let digits = val
+            .strip_prefix("0x")
+            .or_else(|| val.strip_prefix("0X"))
+            .unwrap_or(val);
+        if digits.split('_').any(str::is_empty) {
+            return Err("invalid underscore placement in numeric literal");
+        }
+        owned = val.replace('_', "");
+        owned.as_str()
     } else {
         val
     };
@@ -553,6 +562,13 @@ mod tests {
             info!("Parsing \"{val}\" as u64 - should fail");
             let res = parse_u64(val.into());
             assert!(res.is_err());
+        }
+
+        // Invalid underscore placement
+        for val in ["_1", "1_", "1__2", "0x_1", "0x1_", "0x1__2", "_0x1"] {
+            info!("Parsing \"{val}\" as u64 - should fail (bad underscore placement)");
+            let res = parse_u64(val.into());
+            assert!(res.is_err(), "{val} should have been rejected");
         }
     }
 

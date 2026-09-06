@@ -275,10 +275,9 @@ impl<'a> Parser<'a> {
     }
 
     /// Like [`Self::parse_value_operations`] but with a caller-supplied numeric value parser.
-    fn parse_value_operations_with<F, E>(&mut self, value_parser: &F) -> Result<ValOp, ErrorKind>
+    fn parse_value_operations_with<F>(&mut self, value_parser: &F) -> Result<ValOp, ErrorKind>
     where
-        F: Fn(&BStr) -> Result<u32, E>,
-        E: Into<String>,
+        F: Fn(&BStr) -> Result<u32, &'static str>,
     {
         let val_op = match self.parse_comparison_operator() {
             Ok(cmp_op) => {
