@@ -25,6 +25,7 @@ use crate::{
     value_parsers::{
         parse_byte_string,
         parse_escaped_byte_string,
+        parse_ethertype,
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
@@ -270,9 +271,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_value_operations(&mut self) -> Result<ValOp, ErrorKind> {
+        self.parse_value_operations_with(&parse_u32)
+    }
+
+    /// Like [`Self::parse_value_operations`] but with a caller-supplied numeric value parser.
+    fn parse_value_operations_with<F>(&mut self, value_parser: &F) -> Result<ValOp, ErrorKind>
+    where
+        F: Fn(&BStr) -> Result<u32, &'static str>,
+    {
         let val_op = match self.parse_comparison_operator() {
             Ok(cmp_op) => {
-                let num = self.parse_value(TokenKind::Value, &parse_u32, "number")?;
+                let num = self.parse_value(TokenKind::Value, value_parser, "number")?;
                 ValOp::compare(cmp_op, num)
             }
             _ => match self.current.kind {
@@ -286,13 +295,13 @@ impl<'a> Parser<'a> {
                     }
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, value_parser, "list of numbers")?;
                     ValOp::match_none(values)
                 }
                 TokenKind::In => {
                     self.advance();
                     let values =
-                        self.parse_list(TokenKind::Value, &parse_u32, "list of numbers")?;
+                        self.parse_list(TokenKind::Value, value_parser, "list of numbers")?;
                     ValOp::match_any(values)
                 }
                 _ => {
@@ -525,6 +534,11 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.parse_ethernet_operations().map(Clause::EthSrc)?
             }
+            TokenKind::LitEthType => {
+                self.advance();
+                self.parse_value_operations_with(&parse_ethertype)
+                    .map(Clause::EthType)?
+            }
             TokenKind::LitIpAddr => {
                 self.advance();
                 self.parse_ip_operations().map(Clause::IpAddr)?
@@ -645,6 +659,9 @@ mod tests {
             ByteReadOp,
             Clause,
             CmpOp,
+            ETHERTYPE_ETHERCAT,
+            ETHERTYPE_IPV4,
+            ETHERTYPE_IPV6,
             EthOp,
             IpOp,
             NumExpr,
@@ -835,6 +852,70 @@ mod tests {
             info!("Parsing '{input}' as a value operations - should succeed");
             let expression = parse(input).unwrap();
             assert_eq!(expression, Expression::Single(clause));
+        }
+    }
+
+    #[test]
+    fn test_parse_eth_type_success() {
+        init_test_logging();
+
+        let cases = [
+            (
+                "eth.type == 0x88a4",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
+            ),
+            (
+                "eth.type == 0x0800",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            ),
+            (
+                "eth.type != 0x88a4",
+                Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_ETHERCAT)),
+            ),
+            (
+                "eth.type == 2048",
+                Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            ),
+            (
+                "eth.type in {0x0800, 0x86dd}",
+                Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+            ),
+            (
+                "eth.type not in {0x0800, 0x86dd}",
+                Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+            ),
+        ];
+
+        for (input, expected_clause) in cases {
+            info!("Parsing '{input}' as an eth.type operation - should succeed");
+            let expression = parse(input).unwrap();
+            assert_eq!(expression, Expression::Single(expected_clause));
+        }
+    }
+
+    #[test]
+    fn test_parse_eth_type_failure() {
+        init_test_logging();
+
+        let inputs = [
+            "eth.type == not-a-number",
+            "eth.type == 0xzz",
+            r#"eth.type == "0x88a4""#,
+            "eth.type in 0x88a4",
+            "eth.type == 65536",
+            "eth.type == 0x10000",
+            "eth.type in {0x0800, 0x10000}",
+            // malformed underscore placement (regression: previously stripped blindly)
+            "eth.type == 1__0",
+            "eth.type == _1",
+            "eth.type == 1_",
+            "eth.type == 0x_1",
+            "eth.type == 0x1_",
+        ];
+
+        for input in inputs {
+            info!("Parsing '{input}' as an eth.type operation - should fail");
+            assert!(parse(input).is_err());
         }
     }
 

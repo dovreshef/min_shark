@@ -71,7 +71,7 @@ impl std::error::Error for ParseError {}
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "error: {}", self.message())?;
-        writeln!(f, "filter: \"{}\"", &self.input)?;
+        writeln!(f, "filter: \"{}\"", self.input)?;
         let span = self.error_span();
         let start = usize::from(span.0);
         let end = usize::from(span.1);
@@ -533,6 +533,24 @@ mod tests {
         let err = parse(input).unwrap_err();
 
         assert_eq!(err.message(), "expected end of input found \"boom\"");
+    }
+
+    #[test]
+    fn test_eth_type_e2e_parse_and_match() {
+        init_test_logging();
+
+        let expr = parse("eth.type in {0x0800, 0x86dd}").unwrap();
+        assert!(expr.matcher().eth_type(0x0800).is_match());
+        assert!(expr.matcher().eth_type(0x86dd).is_match());
+        assert!(!expr.matcher().eth_type(0x88a4).is_match());
+        // no eth_type supplied → false; negation via parsed syntax → true
+        assert!(!expr.matcher().is_match());
+        assert!(
+            parse("not eth.type == 0x0800")
+                .unwrap()
+                .matcher()
+                .is_match()
+        );
     }
 
     #[test]

@@ -438,6 +438,9 @@ pub enum Clause {
     /// Ethernet either source or destination match
     #[display("eth {_0}")]
     EthAddr(EthOp),
+    /// Match the Ethernet ethertype (e.g. `eth.type == 0x88a4`)
+    #[display("eth.type {_0}")]
+    EthType(ValOp),
     /// Destination IP match
     #[display("ip.dst {_0}")]
     IpDst(IpOp),
@@ -503,6 +506,10 @@ impl Clause {
                         .map(|addr| eth_op.is_match(addr))
                         .unwrap_or_default()
             }
+            Clause::EthType(val_op) => matcher
+                .eth_type
+                .map(|t| val_op.is_match(t.into()))
+                .unwrap_or_default(),
             Clause::IpDst(ip_op) => matcher
                 .dst_ip
                 .map(|ip| ip_op.is_match(ip))
@@ -643,6 +650,7 @@ impl Expression {
             srcport: None,
             dstport: None,
             vlan: None,
+            eth_type: None,
             payload: None,
         }
     }
@@ -674,6 +682,7 @@ pub struct Matcher<'e, 'p> {
     srcport: Option<u16>,
     dstport: Option<u16>,
     vlan: Option<u32>,
+    eth_type: Option<u16>,
     payload: Option<&'p [u8]>,
 }
 
@@ -694,6 +703,22 @@ impl<'p> Matcher<'_, 'p> {
     pub fn vlan(mut self, val: impl Into<u32>) -> Self {
         self.is_vlan = Some(true);
         self.vlan = Some(val.into());
+        self
+    }
+
+    /// The Ethernet EtherType of the packet (the 2-byte field after the MAC addresses).
+    ///
+    /// Pass the EtherType that is relevant to your matching context:
+    /// - Untagged frames: pass the outer EtherType directly.
+    /// - 802.1Q VLAN frames: outer EtherType is `0x8100`; pass the inner EtherType if you
+    ///   want to match on the encapsulated protocol.
+    /// - 802.3 length-field frames (field value ≤ 1500): omit this call; an unset field
+    ///   evaluates to false, which is the safe default.
+    ///
+    /// If this method is not called, any `eth.type` clause evaluates to false.
+    /// Negating such a clause (e.g. `not eth.type == X`) therefore evaluates to true.
+    pub fn eth_type(mut self, val: u16) -> Self {
+        self.eth_type = Some(val);
         self
     }
 
@@ -753,11 +778,21 @@ impl<'p> Matcher<'_, 'p> {
 }
 
 #[cfg(test)]
+pub(crate) const ETHERTYPE_IPV4: u32 = 0x0800;
+#[cfg(test)]
+pub(crate) const ETHERTYPE_IPV6: u32 = 0x86dd;
+#[cfg(test)]
+pub(crate) const ETHERTYPE_ETHERCAT: u32 = 0x88a4;
+
+#[cfg(test)]
 mod tests {
     use super::{
         ByteReadOp,
         Clause,
         CmpOp,
+        ETHERTYPE_ETHERCAT,
+        ETHERTYPE_IPV4,
+        ETHERTYPE_IPV6,
         EthOp,
         Expression,
         IpOp,
@@ -1019,6 +1054,41 @@ mod tests {
             let res = expression.matcher().vlan(vlan).is_match();
             assert!(res);
         }
+    }
+
+    #[test]
+    fn test_single_clause_eth_type_expressions() {
+        init_test_logging();
+
+        let eth_type = ETHERTYPE_ETHERCAT as u16;
+        let matching = [
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_ETHERCAT)),
+            Clause::EthType(ValOp::compare(CmpOp::NotEqual, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_ETHERCAT])),
+            Clause::EthType(ValOp::match_none(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+        ];
+        for clause in matching.into_iter() {
+            let expression = Expression::from(clause);
+            info!("Evaluating expression \"{expression}\" - should match");
+            assert!(expression.matcher().eth_type(eth_type).is_match());
+        }
+
+        let not_matching = [
+            Clause::EthType(ValOp::compare(CmpOp::Equal, ETHERTYPE_IPV4)),
+            Clause::EthType(ValOp::match_any(vec![ETHERTYPE_IPV4, ETHERTYPE_IPV6])),
+        ];
+        for clause in not_matching.into_iter() {
+            let expression = Expression::from(clause);
+            info!("Evaluating expression \"{expression}\" - should not match");
+            assert!(!expression.matcher().eth_type(eth_type).is_match());
+        }
+
+        // No eth_type set on the matcher: false, not a panic.
+        let expression = Expression::from(Clause::EthType(ValOp::compare(
+            CmpOp::Equal,
+            ETHERTYPE_ETHERCAT,
+        )));
+        assert!(!expression.matcher().is_match());
     }
 
     #[test]

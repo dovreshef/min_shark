@@ -15,14 +15,23 @@ pub(crate) fn parse_u32(val: &BStr) -> Result<u32, &'static str> {
 }
 
 /// Parse a given string as a u64, supporting decimal and hex (0x) literals.
-/// Underscores are allowed as visual separators.
+/// Underscores are allowed as visual separators between digits (e.g. `1_000`, `0xff_ff`),
+/// but not at the start or end of the digit sequence, and not doubled (`1__2`).
 pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
     let val = std::str::from_utf8(val).map_err(|_| "not a valid utf-8 string")?;
-    // Strip underscores for visual separator support (e.g., 1_000_000)
-    let stripped: String;
+    let owned;
     let val = if val.contains('_') {
-        stripped = val.replace('_', "");
-        &stripped
+        // Underscores are separators: every segment between them must be non-empty.
+        // Stripping the 0x prefix first ensures "0x_1" → digits "_1" → leading empty segment.
+        let digits = val
+            .strip_prefix("0x")
+            .or_else(|| val.strip_prefix("0X"))
+            .unwrap_or(val);
+        if digits.split('_').any(str::is_empty) {
+            return Err("invalid underscore placement in numeric literal");
+        }
+        owned = val.replace('_', "");
+        owned.as_str()
     } else {
         val
     };
@@ -31,6 +40,16 @@ pub(crate) fn parse_u64(val: &BStr) -> Result<u64, &'static str> {
     } else {
         val.parse().map_err(|_| "not a valid number")
     }
+}
+
+/// Parse a given string as a u16 EtherType, supporting decimal and hex (0x) literals.
+/// Rejects values above 0xffff (u16::MAX).
+/// Underscores are allowed as visual separators.
+pub(crate) fn parse_ethertype(val: &BStr) -> Result<u32, &'static str> {
+    let n = parse_u64(val)?;
+    u16::try_from(n)
+        .map(u32::from)
+        .map_err(|_| "EtherType value out of range (must be 0x0000–0xffff)")
 }
 
 /// Parse a given string as a u16 (decimal only, for byte-read offsets)
@@ -59,24 +78,21 @@ pub fn parse_regex(val: &BStr) -> Result<RegexMatcher, String> {
 fn parse_ascii_byte(n1: u8, n2: u8) -> Result<u8, &'static str> {
     let mut byte = 0;
     for n in [n1, n2] {
-        let nibble;
         // 0-9
-        if n > 47 && n < 58 {
+        let nibble = if n > 47 && n < 58 {
             // The letter "0" is in the ASCII table at position 48
-            nibble = n - 48;
-        }
+            n - 48
         // A-F
-        else if n > 64 && n < 71 {
+        } else if n > 64 && n < 71 {
             // The letter "A" (dec 10) in the ASCII table at position 65
-            nibble = n - 55;
-        }
+            n - 55
         // a-f
-        else if n > 96 && n < 103 {
+        } else if n > 96 && n < 103 {
             // The letter "a" (dec 10) in the ASCII table at position 97
-            nibble = n - 87;
+            n - 87
         } else {
             return Err("not a valid ascii hex character");
-        }
+        };
         byte <<= 4;
         byte |= nibble;
     }
@@ -98,8 +114,8 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 3 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.chunks_exact(3) {
-                if ![b':', b'-'].contains(&group[0]) {
+            for group in rest.as_chunks::<3>().0 {
+                if !b":-".contains(&group[0]) {
                     return Err("invalid byte-string separator");
                 }
                 let byte = parse_ascii_byte(group[1], group[2])?;
@@ -110,7 +126,7 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 2 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.chunks_exact(2) {
+            for group in rest.as_chunks::<2>().0 {
                 let byte = parse_ascii_byte(group[0], group[1])?;
                 bytes.push(byte);
             }
@@ -225,6 +241,7 @@ mod tests {
         parse_ascii_byte,
         parse_byte_string,
         parse_escaped_byte_string,
+        parse_ethertype,
         parse_ip_net,
         parse_mac_addr,
         parse_regex,
@@ -261,6 +278,36 @@ mod tests {
             info!("Parsing \"{val}\" as u16 - should fail");
             let res = parse_u32(val);
             assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_parse_ethertype() {
+        init_test_logging();
+
+        // Valid EtherType values
+        for (val, expected) in [
+            ("0", 0u32),
+            ("0x0800", 0x0800),
+            ("0x86dd", 0x86dd),
+            ("0xffff", 0xffff),
+            ("65535", 65535),
+        ] {
+            info!("Parsing \"{val}\" as EtherType - should succeed");
+            let num = parse_ethertype(val.into()).unwrap();
+            assert_eq!(num, expected);
+        }
+
+        // Out-of-range: values above u16::MAX must fail
+        for val in ["65536", "0x10000", "4294967295", "0xffffffff"] {
+            info!("Parsing \"{val}\" as EtherType - should fail (out of range)");
+            assert!(parse_ethertype(val.into()).is_err());
+        }
+
+        // Malformed inputs must fail
+        for val in ["", "abc", "0x", "-1"] {
+            info!("Parsing \"{val}\" as EtherType - should fail (malformed)");
+            assert!(parse_ethertype(val.into()).is_err());
         }
     }
 
@@ -515,6 +562,13 @@ mod tests {
             info!("Parsing \"{val}\" as u64 - should fail");
             let res = parse_u64(val.into());
             assert!(res.is_err());
+        }
+
+        // Invalid underscore placement
+        for val in ["_1", "1_", "1__2", "0x_1", "0x1_", "0x1__2", "_0x1"] {
+            info!("Parsing \"{val}\" as u64 - should fail (bad underscore placement)");
+            let res = parse_u64(val.into());
+            assert!(res.is_err(), "{val} should have been rejected");
         }
     }
 
