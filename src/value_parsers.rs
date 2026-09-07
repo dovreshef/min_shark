@@ -114,8 +114,8 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 3 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.as_chunks::<3>().0 {
-                if !b":-".contains(&group[0]) {
+            for group in rest.chunks_exact(3) {
+                if ![b':', b'-'].contains(&group[0]) {
                     return Err("invalid byte-string separator");
                 }
                 let byte = parse_ascii_byte(group[1], group[2])?;
@@ -126,7 +126,7 @@ pub fn parse_byte_string(val: &BStr) -> Result<Vec<u8>, &'static str> {
             if rest.len() % 2 != 0 {
                 return Err("invalid byte-string format");
             }
-            for group in rest.as_chunks::<2>().0 {
+            for group in rest.chunks_exact(2) {
                 let byte = parse_ascii_byte(group[0], group[1])?;
                 bytes.push(byte);
             }

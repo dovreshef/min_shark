@@ -905,6 +905,12 @@ mod tests {
             "eth.type == 65536",
             "eth.type == 0x10000",
             "eth.type in {0x0800, 0x10000}",
+            // malformed underscore placement (regression: previously stripped blindly)
+            "eth.type == 1__0",
+            "eth.type == _1",
+            "eth.type == 1_",
+            "eth.type == 0x_1",
+            "eth.type == 0x1_",
         ];
 
         for input in inputs {

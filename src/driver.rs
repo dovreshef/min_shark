@@ -543,10 +543,11 @@ mod tests {
         assert!(expr.matcher().eth_type(0x0800).is_match());
         assert!(expr.matcher().eth_type(0x86dd).is_match());
         assert!(!expr.matcher().eth_type(0x88a4).is_match());
-        // no eth_type supplied → false; negation → true
+        // no eth_type supplied → false; negation via parsed syntax → true
         assert!(!expr.matcher().is_match());
         assert!(
-            Expression::not(parse("eth.type == 0x0800").unwrap())
+            parse("not eth.type == 0x0800")
+                .unwrap()
                 .matcher()
                 .is_match()
         );

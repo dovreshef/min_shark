@@ -86,8 +86,10 @@ Example:
 
 A whole non-negative number without fractions. `eth.type` additionally accepts
 `0x`-prefixed hex literals (e.g. `0x88a4`), which is the usual way to write ethertypes.
-Underscores may be used as visual separators between digits (e.g. `1_000`, `0xff_ff`),
-but not at the start or end of the digit sequence, and not doubled (`1__2`).
+For `eth.type` values and numeric literals in byte-read expressions (`payload.u8[...]` etc.),
+underscores may be used as visual separators between digits (e.g. `0xff_ff`), but not at the
+start or end of the digit sequence, and not doubled (`1__2`). Other numeric fields (ports,
+`vlan.id`, etc.) do not support underscore separators.
 
 Example:
 * 'srcport in {22, 80}'
@@ -186,7 +188,7 @@ parse raw frames; it is the caller's responsibility to decide which EtherType va
 * **Untagged frames**: pass the outer EtherType directly (e.g. `0x0800` for IPv4).
 * **IEEE 802.1Q (VLAN)**: the outer EtherType field is `0x8100` (TPID). To match on the
   encapsulated protocol, the caller must strip the VLAN tag and pass the inner EtherType.
-  To match on "frame is VLAN-tagged", write `eth.type == 0x8100`.
+  To match on "frame is VLAN-tagged", use the `vlan` field instead.
 * **QinQ (802.1ad)**: outer TPID is `0x88a8`. Same principle applies — pass whichever
   layer's EtherType is meaningful for the use case.
 * **IEEE 802.3 length-field frames**: when the two-byte field carries a frame length (value
